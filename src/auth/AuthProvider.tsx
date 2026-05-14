@@ -33,6 +33,30 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               createdAt: data.createdAt || new Date().toISOString(),
               photoUrl: data.photoUrl
             });
+          } else if (user.email === 'brgamexd@gmail.com') {
+            // Auto-bootstrap master admin
+            const newAdminData = {
+              email: user.email,
+              name: 'Arthur Admin',
+              role: 'owner',
+              createdAt: new Date().toISOString(),
+            };
+            try {
+              const { setDoc } = await import('firebase/firestore');
+              await setDoc(doc(db, 'adminUsers', user.uid), newAdminData);
+              setCurrentUser({
+                id: user.uid,
+                email: user.email,
+                name: 'Arthur Admin',
+                role: 'owner',
+                createdAt: newAdminData.createdAt
+              });
+            } catch (err) {
+              console.error('Failed to bootstrap admin:', err);
+              window.alert("Login autenticado, mas o Firestore bloqueou a criação do documento adminUsers. Crie manualmente adminUsers/" + user.uid + " no Firebase Console.");
+              setCurrentUser(null);
+              await signOut(auth);
+            }
           } else {
             setCurrentUser(null);
             await signOut(auth);
@@ -58,7 +82,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await signInWithEmailAndPassword(auth, email, password);
     } catch (error: any) {
       setIsLoading(false);
-      throw new Error(error?.message || 'Credenciais inválidas');
+      const customError = new Error(error?.message || 'Credenciais inválidas');
+      (customError as any).code = error?.code;
+      throw customError;
     }
   };
 

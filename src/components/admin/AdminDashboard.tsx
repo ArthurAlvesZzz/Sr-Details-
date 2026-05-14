@@ -75,7 +75,7 @@ export default function AdminDashboard({
         {/* Main Content */}
         <div className="flex-1 overflow-x-hidden overflow-y-auto no-scrollbar pb-[120px] pt-4">
           {activeTab === 'today' && <AdminToday bookings={bookings} setBookings={setBookings} onNavigateToTab={setActiveTab} />}
-          {activeTab === 'schedule' && <AdminScheduleTab bookings={bookings} settings={scheduleSettings} setSettings={setScheduleSettings} onNavigateToTab={setActiveTab} />}
+          {activeTab === 'schedule' && <AdminScheduleTab bookings={bookings} settings={scheduleSettings} setSettings={setScheduleSettings} onNavigateToTab={setActiveTab} services={services} />}
           {activeTab === 'orders' && <AdminOrdersTab bookings={bookings} setBookings={setBookings} />}
           {activeTab === 'services' && <AdminServicesTab services={services} setServices={setServices} />}
           {activeTab === 'settings' && <AdminSettingsTab 

@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ScheduleSettings, BusinessSettings } from '../../types.ts';
 import { CalendarRange, Paintbrush, Building2, Users, Database, ArrowLeft, Save, UploadCloud } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useToast } from './ToastProvider';
+import { getFirebaseFriendlyError } from '../../utils/firebaseErrors';
 
 interface AdminSettingsTabProps {
   scheduleSettings: ScheduleSettings;
@@ -14,6 +15,25 @@ interface AdminSettingsTabProps {
 export default function AdminSettingsTab({ scheduleSettings, setScheduleSettings, brandSettings, setBrandSettings }: AdminSettingsTabProps) {
   const { showToast } = useToast();
   const [activeView, setActiveView] = useState<string | null>(null);
+  const [adminUsers, setAdminUsers] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (activeView === 'users') {
+      const fetchUsers = async () => {
+        try {
+          const { db } = await import('../../lib/firebase');
+          const { collection, getDocs } = await import('firebase/firestore');
+          const snap = await getDocs(collection(db, 'adminUsers'));
+          const users = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          setAdminUsers(users);
+        } catch (err) {
+          console.error(err);
+          showToast(getFirebaseFriendlyError(err, 'Erro ao carregar usuários.'), 'error');
+        }
+      };
+      fetchUsers();
+    }
+  }, [activeView]);
 
   const options = [
     { id: 'identity', icon: Paintbrush, title: 'Identidade Visual', desc: 'Logo, cores e nome comercial' },
@@ -27,22 +47,23 @@ export default function AdminSettingsTab({ scheduleSettings, setScheduleSettings
     e.preventDefault();
     const fd = new FormData(e.target as HTMLFormElement);
     const updated = {
-       ...brandSettings,
        businessName: fd.get('businessName') as string,
        primaryColor: fd.get('primaryColor') as string,
        secondaryColor: fd.get('secondaryColor') as string,
        headline: fd.get('headline') as string,
        subheadline: fd.get('subheadline') as string,
        slogan: fd.get('slogan') as string,
+       logoUrl: fd.get('logoUrl') as string,
     };
     try {
       const { db } = await import('../../lib/firebase');
       const { doc, setDoc } = await import('firebase/firestore');
-      await setDoc(doc(db, 'businessSettings', 'main'), updated);
-      showToast('Identidade visual atualizada com sucesso.');
+      await setDoc(doc(db, 'businessSettings', 'main'), updated, { merge: true });
+      showToast('Identidade visual atualizada com sucesso.', 'success');
       setActiveView(null);
-    } catch {
-      showToast('Erro ao atualizar identidade', 'error');
+    } catch (err) {
+      console.error(err);
+      showToast(getFirebaseFriendlyError(err, 'Erro ao atualizar identidade.'), 'error');
     }
   };
 
@@ -50,7 +71,6 @@ export default function AdminSettingsTab({ scheduleSettings, setScheduleSettings
     e.preventDefault();
     const fd = new FormData(e.target as HTMLFormElement);
     const updated = {
-       ...brandSettings,
        address: fd.get('address') as string,
        city: fd.get('city') as string,
        state: fd.get('state') as string,
@@ -62,11 +82,12 @@ export default function AdminSettingsTab({ scheduleSettings, setScheduleSettings
     try {
       const { db } = await import('../../lib/firebase');
       const { doc, setDoc } = await import('firebase/firestore');
-      await setDoc(doc(db, 'businessSettings', 'main'), updated);
+      await setDoc(doc(db, 'businessSettings', 'main'), updated, { merge: true });
       showToast('Dados da empresa atualizados com sucesso.', 'success');
       setActiveView(null);
-    } catch {
-      showToast('Erro ao atualizar dados', 'error');
+    } catch (err) {
+      console.error(err);
+      showToast(getFirebaseFriendlyError(err, 'Erro ao atualizar dados.'), 'error');
     }
   };
 
@@ -87,11 +108,11 @@ export default function AdminSettingsTab({ scheduleSettings, setScheduleSettings
 
                  <form onSubmit={handleSaveIdentity} className="space-y-5">
                     <div className="bg-[#111114] border border-white/5 rounded-2xl p-5 text-center">
-                       <div className="w-20 h-20 bg-[#0B0B0D] border border-dashed border-white/20 rounded-full mx-auto flex items-center justify-center mb-3 text-[#6F7175]">
-                          <UploadCloud size={24} />
+                       <div className="w-20 h-20 bg-[#0B0B0D] border border-dashed border-white/20 rounded-full mx-auto flex items-center justify-center mb-3 text-[#6F7175] overflow-hidden">
+                          {brandSettings.logoUrl ? <img src={brandSettings.logoUrl} alt="Logo" className="w-full h-full object-cover" /> : <UploadCloud size={24} />}
                        </div>
-                       <p className="text-xs text-[#A7A7A3] font-medium mb-1">Fazer upload de nova Logo</p>
-                       <p className="text-[10px] text-[#6F7175]">Apenas simulação visual no modo local</p>
+                       <p className="text-xs text-[#A7A7A3] font-medium mb-2">URL da Logo</p>
+                       <input name="logoUrl" defaultValue={brandSettings.logoUrl || ''} placeholder="https://..." className="w-full bg-[#050505] border border-white/10 rounded-xl p-2 text-xs text-white" />
                     </div>
 
                     <div>
@@ -158,6 +179,10 @@ export default function AdminSettingsTab({ scheduleSettings, setScheduleSettings
                     const closeTime = fd.get('closeTime') as string;
                     const slotInterval = Number(fd.get('slotInterval'));
                     const buffer = Number(fd.get('buffer'));
+                    const teamsCapacity = Number(fd.get('teamsCapacity'));
+                    const maxBookingsPerDay = Number(fd.get('maxBookingsPerDay'));
+                    const allowSameDayBooking = fd.get('allowSameDayBooking') === 'on';
+                    const minimumNoticeMinutes = Number(fd.get('minimumNoticeMinutes'));
                     try {
                       const { db } = await import('../../lib/firebase');
                       const { doc, setDoc } = await import('firebase/firestore');
@@ -165,12 +190,17 @@ export default function AdminSettingsTab({ scheduleSettings, setScheduleSettings
                         ...scheduleSettings,
                         businessHours: { start: openTime, end: closeTime },
                         slotIntervalMinutes: slotInterval,
-                        bufferBetweenBookingsMinutes: buffer
-                      });
+                        bufferBetweenBookingsMinutes: buffer,
+                        teamsCapacity,
+                        maxBookingsPerDay,
+                        allowSameDayBooking,
+                        minimumNoticeMinutes
+                      }, { merge: true });
                       showToast('Capacidade da agenda atualizada.', 'success');
                       setActiveView(null);
-                    } catch {
-                      showToast('Erro ao salvar capacidade', 'error');
+                    } catch (err) {
+                      console.error(err);
+                      showToast(getFirebaseFriendlyError(err, 'Erro ao salvar capacidade.'), 'error');
                     }
                  }} className="space-y-5">
                     <div className="grid grid-cols-2 gap-4">
@@ -183,13 +213,39 @@ export default function AdminSettingsTab({ scheduleSettings, setScheduleSettings
                           <input type="time" name="closeTime" defaultValue={scheduleSettings.businessHours.end} className="w-full bg-[#111114] border border-white/5 rounded-2xl p-4 text-sm text-[#F4F4F2] focus:border-[#FFD000]/30 outline-none" required />
                        </div>
                     </div>
-                    <div>
-                       <label className="text-xs font-bold text-[#A7A7A3] uppercase tracking-wider pl-4 mb-2 block">Intervalo de Slots (Minutos)</label>
-                       <input type="number" name="slotInterval" defaultValue={30} className="w-full bg-[#111114] border border-white/5 rounded-2xl p-4 text-sm text-[#F4F4F2] focus:border-[#FFD000]/30 outline-none" required />
+                    <div className="grid grid-cols-2 gap-4">
+                       <div>
+                          <label className="text-xs font-bold text-[#A7A7A3] uppercase tracking-wider pl-4 mb-2 block">Equipes Simultâneas</label>
+                          <input type="number" name="teamsCapacity" defaultValue={scheduleSettings.teamsCapacity || 1} className="w-full bg-[#111114] border border-white/5 rounded-2xl p-4 text-sm text-[#F4F4F2] focus:border-[#FFD000]/30 outline-none" required />
+                       </div>
+                       <div>
+                          <label className="text-xs font-bold text-[#A7A7A3] uppercase tracking-wider pl-4 mb-2 block">Máximo Agendamentos</label>
+                          <input type="number" name="maxBookingsPerDay" defaultValue={scheduleSettings.maxBookingsPerDay || 10} className="w-full bg-[#111114] border border-white/5 rounded-2xl p-4 text-sm text-[#F4F4F2] focus:border-[#FFD000]/30 outline-none" required />
+                       </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                       <div>
+                          <label className="text-xs font-bold text-[#A7A7A3] uppercase tracking-wider pl-4 mb-2 block">Intervalo de Slots (Min)</label>
+                          <input type="number" name="slotInterval" defaultValue={scheduleSettings.slotIntervalMinutes || 30} className="w-full bg-[#111114] border border-white/5 rounded-2xl p-4 text-sm text-[#F4F4F2] focus:border-[#FFD000]/30 outline-none" required />
+                       </div>
+                       <div>
+                          <label className="text-xs font-bold text-[#A7A7A3] uppercase tracking-wider pl-4 mb-2 block">Buffer Serviços (Min)</label>
+                          <input type="number" name="buffer" defaultValue={scheduleSettings.bufferBetweenBookingsMinutes || 15} className="w-full bg-[#111114] border border-white/5 rounded-2xl p-4 text-sm text-[#F4F4F2] focus:border-[#FFD000]/30 outline-none" required />
+                       </div>
+                    </div>
+                    <div className="flex items-center justify-between bg-[#111114] border border-white/5 rounded-2xl p-4">
+                       <div>
+                          <h4 className="text-sm font-bold text-[#F4F4F2]">Agendar Mesma Data</h4>
+                          <p className="text-xs text-[#A7A7A3]">Cliente pode agendar para o mesmo dia.</p>
+                       </div>
+                       <label className="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" name="allowSameDayBooking" defaultChecked={scheduleSettings.allowSameDayBooking !== false} className="sr-only peer" />
+                          <div className="w-11 h-6 bg-[#050505] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#FFD000]"></div>
+                       </label>
                     </div>
                     <div>
-                       <label className="text-xs font-bold text-[#A7A7A3] uppercase tracking-wider pl-4 mb-2 block">Buffer Entre Serviços (Minutos)</label>
-                       <input type="number" name="buffer" defaultValue={15} className="w-full bg-[#111114] border border-white/5 rounded-2xl p-4 text-sm text-[#F4F4F2] focus:border-[#FFD000]/30 outline-none" required />
+                       <label className="text-xs font-bold text-[#A7A7A3] uppercase tracking-wider pl-4 mb-2 block">Aviso Prévio (Minutos)</label>
+                       <input type="number" name="minimumNoticeMinutes" defaultValue={scheduleSettings.minimumNoticeMinutes || 120} className="w-full bg-[#111114] border border-white/5 rounded-2xl p-4 text-sm text-[#F4F4F2] focus:border-[#FFD000]/30 outline-none" required />
                     </div>
                     <button type="submit" className="w-full bg-[#FFD000] text-[#050505] p-4 rounded-xl font-black text-sm uppercase tracking-wider flex items-center justify-center gap-2 active:scale-[0.98] transition-transform mt-8 shadow-[0_5px_20px_rgba(255,208,0,0.2)]">
                        <Save size={18} /> Salvar Capacidade
@@ -261,25 +317,31 @@ export default function AdminSettingsTab({ scheduleSettings, setScheduleSettings
                  </header>
 
                  <div className="space-y-4">
-                    <div className="bg-[#1A1810] border border-[#FFD000]/20 rounded-2xl p-4 text-center">
-                       <p className="text-xs text-[#FFD000] leading-relaxed">
-                         Gerenciamento real de usuários será ativado ao conectar Firebase Auth. No momento, os usuários são demonstrativos.
-                       </p>
-                    </div>
-
-                    <div className="bg-[#111114] border border-white/5 rounded-2xl p-4 flex justify-between items-center text-sm shadow-inner">
-                       <div>
-                          <p className="text-[#F4F4F2] font-black tracking-wide">admin@srdetails.com.br</p>
-                          <p className="text-[#A7A7A3] text-xs">Proprietário</p>
+                    {adminUsers.length === 0 ? (
+                       <div className="bg-[#1A1810] border border-[#FFD000]/20 rounded-2xl p-4 text-center">
+                          <p className="text-xs text-[#FFD000] leading-relaxed">
+                            Carregando usuários ou nenhum admin encontrado.
+                          </p>
                        </div>
-                       <span className="bg-green-500/10 text-green-500 text-[10px] uppercase font-black px-2 py-1 rounded-md">Ativo</span>
-                    </div>
+                    ) : (
+                       adminUsers.map(user => (
+                          <div key={user.id} className="bg-[#111114] border border-white/5 rounded-2xl p-4 flex justify-between items-center text-sm shadow-inner">
+                             <div>
+                                <p className="text-[#F4F4F2] font-black tracking-wide">{user.email || 'Email desconhecido'}</p>
+                                <p className="text-[#A7A7A3] text-xs">{user.name || 'Admin'} - {user.role || 'Geral'}</p>
+                             </div>
+                             <span className="bg-green-500/10 text-green-500 text-[10px] uppercase font-black px-2 py-1 rounded-md">Ativo</span>
+                          </div>
+                       ))
+                    )}
 
                     <button 
-                      onClick={() => showToast('Gerenciamento real de usuários será ativado com Firebase Auth.', 'info')}
+                      onClick={() => {
+                        showToast('Gerenciamento de convites em breve.', 'info');
+                      }}
                       className="w-full bg-[#0B0B0D] border border-dashed border-[#FFD000]/50 text-[#FFD000] p-4 rounded-xl font-black text-sm uppercase tracking-wider flex items-center justify-center gap-2 active:scale-[0.98] transition-transform shadow-inner hover:bg-[#FFD000]/5"
                     >
-                       <Users size={18} /> Convidar Usuário
+                       <Users size={18} /> Adicionar Nova Permissão
                     </button>
                  </div>
               </motion.div>

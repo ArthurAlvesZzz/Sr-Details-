@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useToast } from './ToastProvider';
 import { formatCurrency, getPriceDisplay } from '../../utils/pricing.ts';
 import { useData } from '../../providers/DataProvider.tsx';
+import { getFirebaseFriendlyError } from '../../utils/firebaseErrors';
 
 interface AdminServicesTabProps {
   services: Service[];
@@ -115,7 +116,7 @@ export default function AdminServicesTab({ services, setServices }: AdminService
        setEditingService(null);
      } catch (err) {
        console.error(err);
-       showToast('Erro ao salvar serviço', 'error');
+       showToast(getFirebaseFriendlyError(err, 'Erro ao salvar serviço.'), 'error');
      }
   };
 
@@ -132,16 +133,22 @@ export default function AdminServicesTab({ services, setServices }: AdminService
          active: !service.active
        });
        showToast('Status modificado com sucesso.', 'info');
-     } catch {
-       showToast('Erro ao alterar status', 'error');
+     } catch (err) {
+       console.error(err);
+       showToast(getFirebaseFriendlyError(err, 'Erro ao alterar status.'), 'error');
      }
   };
 
   const handleRestoreCatalog = async () => {
     if (!window.confirm('Tem certeza? Isso irá cadastrar no Firebase todos os 35 serviços base da SR Details se não existirem.')) return;
-    const { seedFirebaseIfEmpty } = await import('../../seedCatalog');
-    await seedFirebaseIfEmpty();
-    showToast('Catálogo base inicializado.', 'success');
+    try {
+      const { seedFirebaseIfEmpty } = await import('../../seedCatalog');
+      await seedFirebaseIfEmpty();
+      showToast('Catálogo base inicializado.', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast(getFirebaseFriendlyError(err, 'Erro ao restaurar catálogo.'), 'error');
+    }
   };
 
   if (editingService) {
@@ -284,8 +291,9 @@ export default function AdminServicesTab({ services, setServices }: AdminService
                           await deleteDoc(doc(db, 'services', (editingService as Service).id));
                           showToast('Serviço excluído', 'success');
                           setEditingService(null);
-                       } catch {
-                          showToast('Erro ao excluir serviço', 'error');
+                       } catch (err) {
+                          console.error(err);
+                          showToast(getFirebaseFriendlyError(err, 'Erro ao excluir serviço.'), 'error');
                        }
                     }
                  }} className="bg-[#111114] text-red-500 border border-white/5 p-4 rounded-xl font-black text-sm uppercase tracking-wider flex items-center justify-center w-14 active:scale-[0.98] transition-transform">

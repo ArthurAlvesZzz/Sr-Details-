@@ -39,7 +39,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // default to first active service or undefined if empty
-  const activeServices = services.filter(s => s.active);
+  const activeServices = useMemo(() => services.filter(s => s.active), [services]);
   const defaultServiceId = activeServices.length > 0 ? activeServices[0].id : '';
 
   const [formData, setFormData] = useState({
@@ -59,51 +59,72 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
   const selectedServiceObj = useMemo(() => activeServices.find(s => s.id === formData.serviceId) || activeServices[0], [formData.serviceId, activeServices]);
 
   useEffect(() => {
-    // Check if there is a drafted service from the catalog
-    if (draftServiceId && activeServices.find(s => s.id === draftServiceId)) {
-      setFormData(prev => ({ ...prev, serviceId: draftServiceId }));
-    } else if (!formData.serviceId && activeServices.length > 0) {
-      setFormData(prev => ({ ...prev, serviceId: activeServices[0].id }));
-    }
+    const hasDraftService = draftServiceId && activeServices.some(s => s.id === draftServiceId);
+    const nextServiceId = hasDraftService 
+      ? draftServiceId 
+      : activeServices[0]?.id || '';
+
+    if (!nextServiceId) return;
+
+    setFormData(prev => {
+      if (prev.serviceId === nextServiceId) {
+        return prev;
+      }
+      return { 
+        ...prev, 
+        serviceId: nextServiceId,
+        vehicleType: prev.serviceId && prev.serviceId !== nextServiceId ? '' : prev.vehicleType
+      };
+    });
   }, [activeServices, draftServiceId]);
 
   // Recalculate available times when date or service changes
   useEffect(() => {
     if (!formData.desiredDate || !selectedServiceObj) {
-      setAvailableTimes([]);
-      setDateError(null);
+      setAvailableTimes(prev => prev.length === 0 ? prev : []);
+      setDateError(prev => prev === null ? prev : null);
       return;
     }
 
     if (!isWorkingDay(formData.desiredDate, scheduleSettings)) {
-      setAvailableTimes([]);
-      setDateError("Estamos fechados neste dia.");
+      setAvailableTimes(prev => prev.length === 0 ? prev : []);
+      setDateError(prev => prev === "Estamos fechados neste dia." ? prev : "Estamos fechados neste dia.");
       return;
     }
 
     if (isDateBlocked(formData.desiredDate, scheduleSettings)) {
-      setAvailableTimes([]);
-      setDateError("Data indisponível (Bloqueada).");
+      setAvailableTimes(prev => prev.length === 0 ? prev : []);
+      setDateError(prev => prev === "Data indisponível (Bloqueada)." ? prev : "Data indisponível (Bloqueada).");
       return;
     }
 
     const slots = getAvailableSlots(formData.desiredDate, selectedServiceObj, bookings, scheduleSettings);
     
     if (slots.length === 0) {
-      setDateError("Agenda cheia para este dia.");
+      setDateError(prev => prev === "Agenda cheia para este dia." ? prev : "Agenda cheia para este dia.");
       const nextFound = findNextAvailableSlot(selectedServiceObj, bookings, scheduleSettings, formData.desiredDate);
-      setNextAvailable(nextFound);
+      setNextAvailable(prev => {
+        if (!prev && !nextFound) return prev;
+        if (prev && nextFound && prev.date === nextFound.date && prev.time === nextFound.time) return prev;
+        return nextFound;
+      });
     } else {
-      setDateError(null);
-      setNextAvailable(null);
+      setDateError(prev => prev === null ? prev : null);
+      setNextAvailable(prev => prev === null ? prev : null);
     }
     
-    setAvailableTimes(slots);
+    setAvailableTimes(prev => {
+       if (prev.length === slots.length && prev.every((v, i) => v === slots[i])) return prev;
+       return slots;
+    });
     
     // Clear previously selected time if it's no longer available
-    if (formData.desiredTime && !slots.includes(formData.desiredTime)) {
-      setFormData(prev => ({ ...prev, desiredTime: '' }));
-    }
+    setFormData(prev => {
+      if (prev.desiredTime && !slots.includes(prev.desiredTime)) {
+        return { ...prev, desiredTime: '' };
+      }
+      return prev;
+    });
 
   }, [formData.desiredDate, formData.serviceId, selectedServiceObj, scheduleSettings, bookings]);
 
@@ -113,10 +134,13 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
         const todayStr = new Date().toISOString().split('T')[0];
         const initialAvail = findNextAvailableSlot(selectedServiceObj, bookings, scheduleSettings, todayStr);
         if (initialAvail) {
-           setFormData(prev => ({ ...prev, desiredDate: initialAvail.date }));
+           setFormData(prev => {
+              if (prev.desiredDate === initialAvail.date) return prev;
+              return { ...prev, desiredDate: initialAvail.date };
+           });
         }
      }
-  }, [step, selectedServiceObj, bookings, scheduleSettings]);
+  }, [step, selectedServiceObj, bookings, scheduleSettings, formData.desiredDate]);
 
 
   // Get price for the selected vehicle type
@@ -164,7 +188,20 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
     }
 
     setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    
+    const errorKeys = Object.keys(newErrors);
+    if (errorKeys.length > 0) {
+      // Small delay to let the DOM update (render the error messages) before scrolling
+      setTimeout(() => {
+        const firstErrorElement = document.getElementById(`field-${errorKeys[0]}`);
+        if (firstErrorElement) {
+          firstErrorElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 50);
+      return false;
+    }
+    
+    return true;
   };
 
   const handleNext = () => {
@@ -359,7 +396,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
             {step === 1 && (
                <motion.div key="step1" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
                   {/* Serviço Principal */}
-                  <div className={`bg-[#0B0B0D]/90 backdrop-blur-xl p-6 rounded-[2rem] border shadow-2xl relative overflow-hidden transition-colors ${errors.serviceId ? 'border-red-500/40 bg-red-500/5' : 'border-white/5'}`}>
+                  <div id="field-serviceId" className={`bg-[#0B0B0D]/90 backdrop-blur-xl p-6 rounded-[2rem] border shadow-2xl relative overflow-hidden transition-colors ${errors.serviceId ? 'border-red-500/40 bg-red-500/5' : 'border-white/5'}`}>
                      <div className="absolute top-0 right-0 w-32 h-32 bg-[#FFD000]/5 blur-3xl rounded-full pointer-events-none"></div>
                      <h3 className="text-xs font-black text-[#6F7175] mb-5 flex items-center gap-2 uppercase tracking-[3px] relative z-10">
                        <ShieldCheck size={14} className="text-[#FFD000]" /> Serviço Principal
@@ -386,7 +423,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
 
                   {/* Categoria do Veículo (Substitui os chips apertados por cards premium) */}
                   {selectedServiceObj && (
-                     <div className={`bg-[#0B0B0D]/90 backdrop-blur-xl p-6 rounded-[2rem] border shadow-2xl relative overflow-hidden transition-colors ${errors.vehicleType ? 'border-red-500/40 bg-red-500/5' : 'border-white/5'}`}>
+                     <div id="field-vehicleType" className={`bg-[#0B0B0D]/90 backdrop-blur-xl p-6 rounded-[2rem] border shadow-2xl relative overflow-hidden transition-colors ${errors.vehicleType ? 'border-red-500/40 bg-red-500/5' : 'border-white/5'}`}>
                         <h3 className="text-xs font-black text-[#6F7175] mb-2 flex items-center gap-2 uppercase tracking-[3px] relative z-10">
                           <Car size={14} className="text-[#FFD000]" /> Categoria do Veículo
                         </h3>
@@ -471,7 +508,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
                      <p className="text-[#A7A7A3] text-xs mb-6">Mencione informações extras do veículo para receber o melhor atendimento.</p>
                      
                      <div className="space-y-4">
-                        <div>
+                        <div id="field-carModel">
                            <label className="block text-[9px] font-black text-[#A7A7A3] uppercase mb-2 tracking-[3px]">Modelo do Carro *</label>
                            <input
                               name="carModel"
@@ -485,7 +522,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">
-                           <div>
+                           <div id="field-carYear">
                               <label className="block text-[9px] font-black text-[#A7A7A3] uppercase mb-2 tracking-[3px]">Ano *</label>
                               <input
                                  name="carYear"
@@ -497,7 +534,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
                               />
                               {errors.carYear && <p className="text-red-400 text-[10px] mt-1.5 ml-2">{errors.carYear}</p>}
                            </div>
-                           <div>
+                           <div id="field-carColor">
                               <label className="block text-[9px] font-black text-[#A7A7A3] uppercase mb-2 tracking-[3px]">Cor *</label>
                               <input
                                  name="carColor"
@@ -511,7 +548,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
                            </div>
                         </div>
 
-                        <div>
+                        <div id="field-carCondition">
                            <label className="block text-[9px] font-black text-[#A7A7A3] uppercase mb-2 tracking-[3px]">Estado Atual *</label>
                            <textarea
                               name="carCondition"
@@ -537,7 +574,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
                      <p className="text-[#A7A7A3] text-xs mb-6 relative z-10">Use nossa agenda inteligente para encontrar sua vaga.</p>
 
                      <div className="space-y-4 relative z-10">
-                        <div className="relative">
+                        <div id="field-desiredDate" className="relative">
                            <label className="block text-[9px] font-black text-[#A7A7A3] uppercase mb-2 tracking-[3px]">Data *</label>
                            <button
                               type="button"
@@ -568,7 +605,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
                         )}
 
                         {!dateError && formData.desiredDate && availableTimes.length > 0 && (
-                          <div className="mt-4">
+                          <div id="field-desiredTime" className="mt-4">
                              <label className="block text-[9px] font-black text-[#A7A7A3] uppercase mb-3 tracking-[3px]">Horários *</label>
                              <div className="grid grid-cols-4 gap-2">
                                 {availableTimes.map(time => {
@@ -603,7 +640,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
                        <Smartphone size={14} className="text-[#FFD000]" /> Dados de Contato
                      </h3>
                      <div className="space-y-4">
-                        <div>
+                        <div id="field-name">
                            <label className="block text-[9px] font-black text-[#A7A7A3] uppercase mb-2 tracking-[3px]">Nome completo *</label>
                            <input
                               required
@@ -616,7 +653,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
                            />
                            {errors.name && <p className="text-red-400 text-[10px] mt-1.5 ml-2">{errors.name}</p>}
                         </div>
-                        <div>
+                        <div id="field-whatsapp">
                            <label className="block text-[9px] font-black text-[#A7A7A3] uppercase mb-2 tracking-[3px]">WhatsApp *</label>
                            <input
                               required

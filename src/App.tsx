@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import BottomNav from './components/BottomNav.tsx';
 import Home from './components/Home.tsx';
 import Services from './components/Services.tsx';
@@ -23,12 +23,28 @@ export function AppContent() {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   }, [currentView]);
 
-  const handleNavigate = (view: View, params?: { serviceId?: string }) => {
+  const handleNavigate = useCallback((view: View, params?: { serviceId?: string }) => {
     if (params?.serviceId) {
-      setDraftServiceId(params.serviceId);
+      setDraftServiceId(prev => prev === params.serviceId ? prev : params.serviceId);
     }
-    setCurrentView(view);
-  };
+    setCurrentView(prev => prev === view ? prev : view);
+  }, []);
+
+  // Fallbacks for brand/schedule if not yet seeded
+  const brand = useMemo(() => businessSettings || {
+    businessName: 'SR Details', slogan: 'A Estética que Valoriza a Sua Vida',
+    headline: 'Eleve o padrão do seu veículo.', subheadline: 'Estética automotiva premium',
+    primaryColor: '#FFD000', secondaryColor: '#B8860B', logoUrl: '',
+    whatsapp: '34999999999', address: 'R. Paulo L. Rotelli, 100', city: 'Uberlândia',
+    state: 'MG', instagram: '@srdetails', googleMapsUrl: '', workingHoursText: 'Seg a Sáb - 08:00 às 18:00'
+  }, [businessSettings]);
+
+  const scheduleBrand = useMemo(() => scheduleSettings || {
+    businessHours: { start: "08:00", end: "18:00" }, workingDays: [1, 2, 3, 4, 5, 6],
+    slotIntervalMinutes: 30, bufferBetweenBookingsMinutes: 30, teamsCapacity: 1,
+    allowSameDayBooking: true, minimumNoticeMinutes: 120, maxBookingsPerDay: null,
+    blockedDates: [], blockedTimeSlots: []
+  }, [scheduleSettings]);
 
   if (loading) {
     return (
@@ -57,22 +73,6 @@ export function AppContent() {
        </div>
     );
   }
-
-  // Fallbacks for brand/schedule if not yet seeded
-  const brand = useMemo(() => businessSettings || {
-    businessName: 'SR Details', slogan: 'A Estética que Valoriza a Sua Vida',
-    headline: 'Eleve o padrão do seu veículo.', subheadline: 'Estética automotiva premium',
-    primaryColor: '#FFD000', secondaryColor: '#B8860B', logoUrl: '',
-    whatsapp: '34999999999', address: 'R. Paulo L. Rotelli, 100', city: 'Uberlândia',
-    state: 'MG', instagram: '@srdetails', googleMapsUrl: '', workingHoursText: 'Seg a Sáb - 08:00 às 18:00'
-  }, [businessSettings]);
-
-  const scheduleBrand = useMemo(() => scheduleSettings || {
-    businessHours: { start: "08:00", end: "18:00" }, workingDays: [1, 2, 3, 4, 5, 6],
-    slotIntervalMinutes: 30, bufferBetweenBookingsMinutes: 30, teamsCapacity: 1,
-    allowSameDayBooking: true, minimumNoticeMinutes: 120, maxBookingsPerDay: null,
-    blockedDates: [], blockedTimeSlots: []
-  }, [scheduleSettings]);
 
   const handleBookingSubmit = async (newRequest: BookingRequest) => {
     // Note: We'll create it directly in Firestore from the Booking component

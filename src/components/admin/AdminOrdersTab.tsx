@@ -4,6 +4,7 @@ import { Search, ChevronDown, CheckCircle2, Clock, XCircle, PlayCircle, Settings
 import { motion, AnimatePresence } from 'motion/react';
 import { formatCurrency } from '../../lib/utils.ts';
 import { useToast } from './ToastProvider';
+import { getFirebaseFriendlyError } from '../../utils/firebaseErrors';
 
 interface AdminOrdersTabProps {
   bookings: BookingRequest[];
@@ -73,8 +74,9 @@ export default function AdminOrdersTab({ bookings, setBookings }: AdminOrdersTab
       });
       setShowStatusModal(false);
       showToast(`Status atualizado para ${status}.`, 'success');
-    } catch {
-      showToast('Erro ao atualizar status', 'error');
+    } catch (err) {
+      console.error(err);
+      showToast(getFirebaseFriendlyError(err, 'Erro ao atualizar status.'), 'error');
     }
   };
 
@@ -87,8 +89,9 @@ export default function AdminOrdersTab({ bookings, setBookings }: AdminOrdersTab
             status: RequestStatus.CANCELED
           });
           showToast('Agendamento cancelado.', 'success');
-        } catch {
-          showToast('Erro ao cancelar agendamento', 'error');
+        } catch (err) {
+          console.error(err);
+          showToast(getFirebaseFriendlyError(err, 'Erro ao cancelar agendamento.'), 'error');
         }
      }
   };
@@ -100,10 +103,21 @@ export default function AdminOrdersTab({ bookings, setBookings }: AdminOrdersTab
           const { doc, deleteDoc } = await import('firebase/firestore');
           await deleteDoc(doc(db, 'bookings', booking.id));
           showToast('Agendamento excluído.', 'success');
-        } catch {
-          showToast('Erro ao excluir agendamento', 'error');
+        } catch (err) {
+          console.error(err);
+          showToast(getFirebaseFriendlyError(err, 'Erro ao excluir agendamento.'), 'error');
         }
      }
+  };
+
+  const openWhatsApp = (booking: BookingRequest) => {
+     const rawPhone = booking.customerPhone?.replace(/\D/g, '');
+     if (!rawPhone || rawPhone.length < 10) {
+        showToast('WhatsApp inválido para este cliente.', 'error');
+        return;
+     }
+     const message = `Olá ${booking.customerName}, aqui é da SR Details. Sobre seu agendamento ${booking.protocol} do veículo ${booking.vehicleModel} para ${booking.date.split('-').reverse().join('/')} às ${booking.time}...`;
+     window.open(`https://wa.me/55${rawPhone}?text=${encodeURIComponent(message)}`, '_blank');
   };
 
   return (
@@ -203,10 +217,10 @@ export default function AdminOrdersTab({ bookings, setBookings }: AdminOrdersTab
                      <Info size={16} />
                      <span className="text-[9px] uppercase tracking-wider font-bold mt-1">Detalhes</span>
                   </button>
-                  <a href={`https://wa.me/55${booking.customerPhone?.replace(/\D/g, '') || '34999999999'}?text=${encodeURIComponent(`Olá ${booking.customerName}, aqui é da SR Details. Sobre o agendamento do seu ${booking.vehicleModel}...`)}`} target="_blank" rel="noreferrer" className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#111114] border border-white/5 text-[#A7A7A3] hover:text-[#25D366] hover:border-[#25D366]/30 transition-colors">
+                  <button onClick={() => openWhatsApp(booking)} className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#111114] border border-white/5 text-[#A7A7A3] hover:text-[#25D366] hover:border-[#25D366]/30 transition-colors">
                      <MessageCircle size={16} />
                      <span className="text-[9px] uppercase tracking-wider font-bold mt-1">WhatsApp</span>
-                  </a>
+                  </button>
                   <button onClick={() => handleCancel(booking)} disabled={booking.status === RequestStatus.CANCELED || booking.status === RequestStatus.FINISHED} className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#111114] border border-white/5 text-[#A7A7A3] hover:text-red-500 hover:border-red-500/30 transition-colors disabled:opacity-30 disabled:pointer-events-none">
                      <XCircle size={16} />
                      <span className="text-[9px] uppercase tracking-wider font-bold mt-1">Cancelar</span>
