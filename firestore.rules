@@ -3,28 +3,28 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function isSignedIn() { return request.auth != null; }
     
-    function getUserRole() {
-      return get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.role;
-    }
-    
     function isAdminEmail() {
       return request.auth != null && request.auth.token.email == 'brgamexd@gmail.com';
     }
 
+    function hasAdminRole(allowedRoles) {
+      return isSignedIn() && exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid)) && get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.role in allowedRoles;
+    }
+
     function isOwner() {
-      return isSignedIn() && (isAdminEmail() || getUserRole() == 'owner');
+      return isSignedIn() && (isAdminEmail() || hasAdminRole(['owner']));
     }
     
     function isManager() {
-      return isSignedIn() && (isAdminEmail() || getUserRole() in ['owner', 'manager']);
+      return isSignedIn() && (isAdminEmail() || hasAdminRole(['owner', 'manager']));
     }
     
     function isAttendant() {
-      return isSignedIn() && (isAdminEmail() || getUserRole() in ['owner', 'manager', 'attendant']);
+      return isSignedIn() && (isAdminEmail() || hasAdminRole(['owner', 'manager', 'attendant']));
     }
     
     function isTechnician() {
-      return isSignedIn() && (isAdminEmail() || getUserRole() in ['owner', 'manager', 'attendant', 'technician']);
+      return isSignedIn() && (isAdminEmail() || hasAdminRole(['owner', 'manager', 'attendant', 'technician']));
     }
 
     match /services/{docId} {

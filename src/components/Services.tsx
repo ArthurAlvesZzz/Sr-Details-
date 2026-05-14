@@ -5,6 +5,14 @@ import { ADDONS } from '../constants.ts';
 import { View, Service } from '../types.ts';
 import { formatCurrency, getPriceDisplay, getActivePriceOptions } from '../utils/pricing.ts';
 
+const safeText = (value: unknown) => String(value ?? '');
+
+const normalizeText = (value: unknown) =>
+  safeText(value).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+const safeArray = <T,>(value: T[] | undefined | null): T[] =>
+  Array.isArray(value) ? value : [];
+
 interface ServicesProps {
   onNavigate: (view: View, params?: { serviceId?: string }) => void;
   services: Service[];
@@ -16,26 +24,47 @@ export default function Services({ onNavigate, services }: ServicesProps) {
   const [selectedServiceParams, setSelectedServiceParams] = useState<Service | null>(null);
 
   const categories = useMemo(() => {
-    const cats = new Set(services.filter(s => s.active).map(s => s.categoryName));
+    const cats = new Set(
+      services
+        .filter(s => s?.active)
+        .map(s => safeText(s.categoryName).trim())
+        .filter(Boolean)
+    );
     return ['Todos', ...Array.from(cats), 'Individuais'];
   }, [services]);
 
   const filteredServices = useMemo(() => {
-    let result = services.filter(s => s.active);
+    let result = services.filter(s => s?.active);
 
     if (activeCategory !== 'Todos' && activeCategory !== 'Individuais') {
-      result = result.filter(s => s.categoryName === activeCategory);
+      result = result.filter(s => safeText(s.categoryName) === activeCategory);
     }
     
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(s => 
-        s.name.toLowerCase().includes(q) || 
-        s.shortDescription.toLowerCase().includes(q)
-      );
+    if (searchQuery.trim()) {
+      const q = normalizeText(searchQuery);
+
+      result = result.filter((service) => {
+        const searchableText = [
+          service.name,
+          service.shortDescription,
+          service.fullDescription,
+          service.categoryName,
+          service.slug,
+          ...safeArray(service.benefits),
+          ...safeArray(service.includes),
+          ...safeArray(service.recommendedFor),
+          ...safeArray(service.priceOptions).map(p => p.label)
+        ].map(normalizeText).join(' ');
+
+        return searchableText.includes(q);
+      });
     }
 
-    return result.sort((a, b) => a.displayOrder - b.displayOrder);
+    return [...result].sort((a, b) => {
+      const orderA = Number(a.displayOrder ?? 9999);
+      const orderB = Number(b.displayOrder ?? 9999);
+      return orderA - orderB;
+    });
   }, [activeCategory, searchQuery, services]);
 
   const handleSelectService = (serviceId: string) => {
@@ -83,20 +112,39 @@ export default function Services({ onNavigate, services }: ServicesProps) {
 
       <div className="space-y-6 relative z-10">
         {activeCategory === 'Individuais' ? (
-          <div className="grid grid-cols-1 gap-4">
-             {ADDONS.map((addon) => (
-               <div key={addon.id} className="bg-[#0B0B0D] border border-white/5 rounded-2xl p-5 flex items-center justify-between shadow-lg">
-                 <div>
-                    <span className="text-[10px] text-[#FFD000] uppercase font-black tracking-widest block mb-1">Individual</span>
-                    <h4 className="text-[#F4F4F2] font-bold text-sm">{addon.name}</h4>
-                 </div>
-                 <div className="text-right">
-                    <span className="text-xs text-[#6F7175] block mb-1">Valor</span>
-                    <span className="text-[#FFE066] font-black text-sm">{formatCurrency(addon.price)}</span>
-                 </div>
-               </div>
-             ))}
-          </div>
+          (() => {
+            const filteredAddons = ADDONS.filter(addon => {
+               if (!searchQuery.trim()) return true;
+               return normalizeText(addon.name).includes(normalizeText(searchQuery));
+            });
+            if (filteredAddons.length === 0) {
+              return (
+                <div className="bg-[#0B0B0D] border border-white/5 rounded-[2rem] p-8 text-center flex flex-col items-center justify-center">
+                   <div className="w-16 h-16 bg-[#111114] rounded-full flex items-center justify-center mb-4 border border-white/5 text-[#6F7175]">
+                     <Search size={24} />
+                   </div>
+                   <p className="text-[#F4F4F2] font-black text-lg mb-2">Nenhum serviço encontrado</p>
+                   <p className="text-[#A7A7A3] text-sm">Tente ajustar sua busca ou categoria.</p>
+                </div>
+              );
+            }
+            return (
+              <div className="grid grid-cols-1 gap-4">
+                 {filteredAddons.map((addon) => (
+                   <div key={addon.id} className="bg-[#0B0B0D] border border-white/5 rounded-2xl p-5 flex items-center justify-between shadow-lg">
+                     <div>
+                        <span className="text-[10px] text-[#FFD000] uppercase font-black tracking-widest block mb-1">Individual</span>
+                        <h4 className="text-[#F4F4F2] font-bold text-sm">{safeText(addon.name)}</h4>
+                     </div>
+                     <div className="text-right">
+                        <span className="text-xs text-[#6F7175] block mb-1">Valor</span>
+                        <span className="text-[#FFE066] font-black text-sm">{formatCurrency(addon.price)}</span>
+                     </div>
+                   </div>
+                 ))}
+              </div>
+            );
+          })()
         ) : services.length === 0 ? (
           <div className="bg-[#0B0B0D] border border-white/5 rounded-[2rem] p-8 text-center flex flex-col items-center justify-center">
              <div className="w-16 h-16 bg-[#111114] rounded-full flex items-center justify-center mb-4 border border-white/5 text-[#6F7175]">
@@ -125,9 +173,9 @@ export default function Services({ onNavigate, services }: ServicesProps) {
               <div className="p-7 relative z-10">
                 <div className="flex justify-between items-start mb-3 gap-4">
                   <div>
-                     <span className="text-[9px] text-[#FFD000] font-black uppercase tracking-[3px] block mb-2">{service.categoryName}</span>
+                     <span className="text-[9px] text-[#FFD000] font-black uppercase tracking-[3px] block mb-2">{safeText(service.categoryName) || 'Serviço'}</span>
                      <h3 className="text-[1.35rem] font-black text-[#F4F4F2] tracking-tighter leading-tight">
-                       {service.name}
+                       {safeText(service.name) || 'Serviço sem nome'}
                      </h3>
                   </div>
                   {(service as any).badge && (
@@ -138,14 +186,14 @@ export default function Services({ onNavigate, services }: ServicesProps) {
                 </div>
                 
                 <p className="text-[#A7A7A3] text-[13px] mb-5 leading-relaxed">
-                  {service.shortDescription}
+                  {safeText(service.shortDescription) || 'Descrição não informada.'}
                 </p>
 
                 <div className="flex flex-wrap gap-2 mb-6">
-                   {service.benefits.map((ben, i) => (
+                   {safeArray(service.benefits).map((ben, i) => (
                       <span key={i} className="inline-flex items-center gap-1.5 bg-[#111114] border border-white/5 px-2.5 py-1.5 rounded-lg text-[10px] uppercase font-black tracking-widest text-[#6F7175]">
                          <Check size={10} className="text-[#FFD000]" />
-                         {ben}
+                         {safeText(ben)}
                       </span>
                    ))}
                 </div>
@@ -153,13 +201,13 @@ export default function Services({ onNavigate, services }: ServicesProps) {
                 <div className="flex items-center justify-between bg-[#050505] p-4 rounded-[1.25rem] border border-white/5 mb-6">
                     <div className="flex flex-col">
                        <span className="text-xl font-black text-[#FFE066] tracking-tighter">
-                          {getPriceDisplay(service.priceOptions || [])}
+                          {getPriceDisplay(safeArray(service.priceOptions))}
                        </span>
                     </div>
                     <div className="flex flex-col items-end">
                        <span className="text-[9px] text-[#A7A7A3] uppercase tracking-[2px] font-black mb-1 flex items-center justify-center gap-1"><Clock size={10}/> Duração</span>
                        <span className="text-[13px] font-bold text-[#F4F4F2]">
-                          {service.deliveryLabel}
+                          {safeText(service.deliveryLabel) || 'Consultar duração'}
                        </span>
                     </div>
                 </div>
@@ -204,8 +252,8 @@ export default function Services({ onNavigate, services }: ServicesProps) {
                   <div className="p-6 pb-4 border-b border-white/5 flex justify-between items-center bg-[#050505] relative">
                      <div className="absolute top-0 right-0 w-32 h-32 bg-[#FFD000]/10 blur-2xl rounded-full pointer-events-none"></div>
                      <div>
-                        <span className="text-[10px] text-[#FFD000] font-black uppercase tracking-[3px] block mb-1">{selectedServiceParams.category}</span>
-                        <h2 className="text-xl font-black text-[#F4F4F2] tracking-tighter">{selectedServiceParams.name}</h2>
+                        <span className="text-[10px] text-[#FFD000] font-black uppercase tracking-[3px] block mb-1">{safeText(selectedServiceParams.categoryName) || 'Serviço'}</span>
+                        <h2 className="text-xl font-black text-[#F4F4F2] tracking-tighter">{safeText(selectedServiceParams.name) || 'Serviço sem nome'}</h2>
                      </div>
                      <button 
                         onClick={() => setSelectedServiceParams(null)}
@@ -217,7 +265,7 @@ export default function Services({ onNavigate, services }: ServicesProps) {
                   
                   <div className="p-6 overflow-y-auto hide-scrollbar flex-1 relative">
                      <p className="text-[#A7A7A3] text-sm leading-relaxed mb-6">
-                        {selectedServiceParams.shortDescription}
+                        {safeText(selectedServiceParams.shortDescription) || 'Descrição não informada.'}
                      </p>
                      
                      <div className="mb-6">
@@ -226,14 +274,16 @@ export default function Services({ onNavigate, services }: ServicesProps) {
                            O que está incluso
                         </h4>
                         <ul className="space-y-3">
-                           {selectedServiceParams.includes.map((item, idx) => (
+                           {safeArray(selectedServiceParams.includes).length > 0 ? safeArray(selectedServiceParams.includes).map((item, idx) => (
                               <li key={idx} className="flex items-start gap-3">
                                  <div className="min-w-[16px] h-4 flex items-center justify-center rounded-full bg-[#FFD000]/10 mt-0.5">
                                     <Check size={10} className="text-[#FFD000]" />
                                  </div>
-                                 <span className="text-sm font-medium text-[#F4F4F2] leading-snug">{item}</span>
+                                 <span className="text-sm font-medium text-[#F4F4F2] leading-snug">{safeText(item)}</span>
                               </li>
-                           ))}
+                           )) : (
+                              <li className="text-sm font-medium text-[#A7A7A3]">Nenhum item informado.</li>
+                           )}
                         </ul>
                      </div>
 
@@ -243,16 +293,16 @@ export default function Services({ onNavigate, services }: ServicesProps) {
                            Tabela de Preços
                         </h4>
                         <div className="space-y-2">
-                           {getActivePriceOptions(selectedServiceParams.priceOptions || []).map((p) => (
-                              <div key={p.id} className="bg-[#111114] border border-white/5 rounded-2xl p-4 flex justify-between items-center">
+                           {getActivePriceOptions(safeArray(selectedServiceParams.priceOptions)).map((p, idx) => (
+                              <div key={p.id || idx} className="bg-[#111114] border border-white/5 rounded-2xl p-4 flex justify-between items-center">
                                  <div className="flex flex-col">
-                                    <span className="text-[13px] font-bold text-[#F4F4F2]">{p.label}</span>
-                                    {p.sublabel && <span className="text-[10px] text-[#A7A7A3] mt-0.5 uppercase tracking-widest">{p.sublabel}</span>}
+                                    <span className="text-[13px] font-bold text-[#F4F4F2]">{safeText(p.label)}</span>
+                                    {p.sublabel && <span className="text-[10px] text-[#A7A7A3] mt-0.5 uppercase tracking-widest">{safeText(p.sublabel)}</span>}
                                  </div>
                                  <div className="text-right">
-                                    <span className="text-[15px] font-black text-[#FFE066]">{formatCurrency(p.price)}</span>
+                                    <span className="text-[15px] font-black text-[#FFE066]">{formatCurrency(p.price || 0)}</span>
                                     {p.installmentLabel && (
-                                       <span className="block text-[9px] text-[#A7A7A3] mt-0.5">{p.installmentLabel}</span>
+                                       <span className="block text-[9px] text-[#A7A7A3] mt-0.5">{safeText(p.installmentLabel)}</span>
                                     )}
                                  </div>
                               </div>

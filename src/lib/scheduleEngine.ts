@@ -1,4 +1,5 @@
 import { BookingRequest, ScheduleSettings, Service } from '../types.ts';
+import { safeArray } from '../utils/safeData.ts';
 
 export function timeToMinutes(time: string): number {
   if (!time) return 0;
@@ -22,11 +23,11 @@ export function getServiceDuration(service: Service): { minutes: number; days: n
 export function isWorkingDay(dateStr: string, settings: ScheduleSettings): boolean {
   const date = new Date(dateStr + 'T12:00:00Z');
   const dayOfWeek = date.getUTCDay();
-  return settings.workingDays.includes(dayOfWeek);
+  return safeArray(settings.workingDays).includes(dayOfWeek);
 }
 
 export function isDateBlocked(dateStr: string, settings: ScheduleSettings): boolean {
-  return settings.blockedDates.includes(dateStr);
+  return safeArray(settings.blockedDates).includes(dateStr);
 }
 
 export function getBookingsForDate(dateStr: string, bookings: BookingRequest[]): BookingRequest[] {
@@ -73,15 +74,15 @@ export function hasCapacityForSlot(
       return false; // Cannot book if any required day is blocked or closed
     }
 
-    const startMins = i === 0 ? timeToMinutes(startTimeStr) : timeToMinutes(settings.businessHours.start);
-    const endMins = durationDays > 0 ? timeToMinutes(settings.businessHours.end) : startMins + durationMinutes;
+    const startMins = i === 0 ? timeToMinutes(startTimeStr) : timeToMinutes(settings.businessHours?.start || "08:00");
+    const endMins = durationDays > 0 ? timeToMinutes(settings.businessHours?.end || "18:00") : startMins + durationMinutes;
 
-    if (endMins > timeToMinutes(settings.businessHours.end)) {
+    if (endMins > timeToMinutes(settings.businessHours?.end || "18:00")) {
       return false; // Exceeds business hours
     }
 
     // Check generic blocked slots
-    for (const block of settings.blockedTimeSlots) {
+    for (const block of safeArray(settings.blockedTimeSlots)) {
       if (block.date === currDateStr) {
         const blockStart = timeToMinutes(block.startTime);
         const blockEnd = timeToMinutes(block.endTime);
@@ -129,8 +130,8 @@ export function getAvailableSlots(dateStr: string, service: Service, bookings: B
   
   const { minutes: durationMinutes, days: durationDays } = getServiceDuration(service);
   
-  let currentMins = timeToMinutes(settings.businessHours.start);
-  const endMins = timeToMinutes(settings.businessHours.end);
+  let currentMins = timeToMinutes(settings.businessHours?.start || "08:00");
+  const endMins = timeToMinutes(settings.businessHours?.end || "18:00");
   const availableSlots: string[] = [];
 
   const now = new Date();

@@ -11,6 +11,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import AdminLogin from './components/AdminLogin.tsx';
 import { useAuth, AuthProvider } from './auth/AuthProvider.tsx';
 import { useData, DataProvider } from './providers/DataProvider.tsx';
+import { CATALOG } from './seedCatalog.ts';
 
 export function AppContent() {
   const { currentUser, isAdmin, logout } = useAuth();
@@ -18,6 +19,8 @@ export function AppContent() {
   const [currentView, setCurrentView] = useState<View>('home' as View);
   const [draftServiceId, setDraftServiceId] = useState<string | null>(null);
   const [myLastRequest, setMyLastRequest] = useState<BookingRequest | null>(null);
+
+  const effectiveServices = services.length > 0 ? services : CATALOG;
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
@@ -62,18 +65,6 @@ export function AppContent() {
     );
   }
 
-  if (services.length === 0 && !loading && currentView !== 'admin' && currentView !== 'admin-login') {
-    return (
-       <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center p-6 text-center space-y-4">
-         <p className="text-[#F4F4F2] font-black text-xl">Catálogo indisponível no momento.</p>
-         <p className="text-[#A7A7A3] text-sm max-w-sm mb-4">Entre em contato com a SR Details ou acesse o painel para configurar o catálogo.</p>
-         <button onClick={() => setCurrentView('admin-login')} className="bg-[#FFD000] text-[#050505] px-6 py-3 font-bold rounded-[1.25rem] shadow-[0_5px_20px_rgba(255,208,0,0.2)]">
-           Acessar painel para popular catálogo
-         </button>
-       </div>
-    );
-  }
-
   const handleBookingSubmit = async (newRequest: BookingRequest) => {
     // Note: We'll create it directly in Firestore from the Booking component
     setMyLastRequest(newRequest);
@@ -81,13 +72,13 @@ export function AppContent() {
 
   const renderView = () => {
     switch (currentView) {
-      case 'home': return <Home onNavigate={handleNavigate} brand={brand} services={services} />;
-      case 'services': return <Services onNavigate={handleNavigate} services={services} />;
-      case 'scanner': return <Diagnostic onNavigate={handleNavigate} services={services} brand={brand} />;
+      case 'home': return <Home onNavigate={handleNavigate} brand={brand} services={effectiveServices} />;
+      case 'services': return <Services onNavigate={handleNavigate} services={effectiveServices} />;
+      case 'scanner': return <Diagnostic onNavigate={handleNavigate} services={effectiveServices} brand={brand} />;
       case 'booking': return <Booking 
         onNavigate={handleNavigate} 
         onSubmit={handleBookingSubmit} 
-        services={services} 
+        services={effectiveServices} 
         scheduleSettings={scheduleBrand}
         bookings={bookings}
         draftServiceId={draftServiceId}
@@ -108,7 +99,7 @@ export function AppContent() {
           onExit={() => handleNavigate('home')} 
         />
       ) : <AdminLogin onNavigate={handleNavigate} />;
-      default: return <Home onNavigate={handleNavigate} brand={brand} services={services} />;
+      default: return <Home onNavigate={handleNavigate} brand={brand} services={effectiveServices} />;
     }
   };
 

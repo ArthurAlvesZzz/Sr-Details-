@@ -132,7 +132,7 @@ export default function MyRequest({ request, onNavigate, brand }: MyRequestProps
            <div className="bg-[#111114] p-4 rounded-xl border border-white/5 shadow-inner">
               <Calendar size={14} className="text-[#FFD000] mb-2" />
               <span className="block text-[10px] text-[#A7A7A3] uppercase tracking-widest font-black mb-1">Data</span>
-              <span className="block text-sm font-bold text-[#F4F4F2]">{request.date.split('-').reverse().join('/')}</span>
+              <span className="block text-sm font-bold text-[#F4F4F2]">{(request.date || '').split('-').reverse().join('/') || 'Não informada'}</span>
            </div>
            <div className="bg-[#111114] p-4 rounded-xl border border-white/5 shadow-inner">
               <Clock size={14} className="text-[#FFD000] mb-2" />

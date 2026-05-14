@@ -47,33 +47,41 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       unsubs.push(onSnapshot(qServices, (snap) => {
         setServices(snap.docs.map(d => ({ ...d.data(), id: d.id } as Service)));
       }, (err) => {
-         setError("Não foi possível carregar os dados do Firebase.");
-         handleFirestoreError(err, OperationType.LIST, 'services');
+         console.warn("Aviso ao carregar services do Firebase. Usando catálogo base temporário na área pública.");
+         try { handleFirestoreError(err, OperationType.LIST, 'services'); } catch(e) { /* ignore to prevent crash */ }
       }));
 
       const qBookings = query(collection(db, 'bookings'));
       unsubs.push(onSnapshot(qBookings, (snap) => {
         setBookings(snap.docs.map(d => ({ ...d.data(), id: d.id } as BookingRequest)));
-      }, (err) => handleFirestoreError(err, OperationType.LIST, 'bookings')));
+      }, (err) => {
+         try { handleFirestoreError(err, OperationType.LIST, 'bookings'); } catch(e) {}
+      }));
 
       const docBusiness = doc(db, 'businessSettings', 'main');
       unsubs.push(onSnapshot(docBusiness, (snap) => {
         if (snap.exists()) setBusinessSettings(snap.data() as BusinessSettings);
-      }, (err) => handleFirestoreError(err, OperationType.GET, 'businessSettings/main')));
+      }, (err) => {
+         try { handleFirestoreError(err, OperationType.GET, 'businessSettings/main'); } catch(e) {}
+      }));
 
       const docSchedule = doc(db, 'scheduleSettings', 'main');
       unsubs.push(onSnapshot(docSchedule, (snap) => {
         if (snap.exists()) setScheduleSettings(snap.data() as ScheduleSettings);
-      }, (err) => handleFirestoreError(err, OperationType.GET, 'scheduleSettings/main')));
+      }, (err) => {
+         try { handleFirestoreError(err, OperationType.GET, 'scheduleSettings/main'); } catch(e) {}
+      }));
 
       const qScanner = query(collection(db, 'scannerRules'));
       unsubs.push(onSnapshot(qScanner, (snap) => {
         setScannerRules(snap.docs.map(d => ({ ...d.data(), id: d.id } as ScannerRule)));
-      }, (err) => handleFirestoreError(err, OperationType.LIST, 'scannerRules')));
+      }, (err) => {
+         try { handleFirestoreError(err, OperationType.LIST, 'scannerRules'); } catch(e) {}
+      }));
 
     } catch (err) {
       console.error('Error starting DataProvider subscriptions', err);
-      setError("Não foi possível carregar os dados do Firebase.");
+      // Not setting global error to allow fallbacks to work
     }
 
     // Give a buffer to avoid fast flickers

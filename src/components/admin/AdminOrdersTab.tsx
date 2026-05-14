@@ -1,10 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { BookingRequest, RequestStatus } from '../../types.ts';
-import { Search, ChevronDown, CheckCircle2, Clock, XCircle, PlayCircle, Settings, X, Edit, Box, Navigation, MessageCircle, Info, Trash2 } from 'lucide-react';
+import { Search, ChevronDown, CheckCircle2, Clock, XCircle, PlayCircle, Settings, X, Edit, Box, Navigation, MessageCircle, Info, Trash2, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatCurrency } from '../../lib/utils.ts';
 import { useToast } from './ToastProvider';
 import { getFirebaseFriendlyError } from '../../utils/firebaseErrors';
+import { db, auth } from '../../lib/firebase';
+import { doc, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
+import { normalizeText } from '../../utils/safeData.ts';
 
 interface AdminOrdersTabProps {
   bookings: BookingRequest[];
@@ -19,6 +22,32 @@ export default function AdminOrdersTab({ bookings, setBookings }: AdminOrdersTab
   const [selectedOrder, setSelectedOrder] = useState<BookingRequest | null>(null);
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [expandedDetailsId, setExpandedDetailsId] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{
+    type: 'cancel' | 'delete';
+    booking: BookingRequest;
+  } | null>(null);
+
+  useEffect(() => {
+    async function loadAdminDebug() {
+      if (!auth.currentUser) return;
+      try {
+        const snap = await getDoc(doc(db, "adminUsers", auth.currentUser.uid));
+        console.log("[AdminOrdersTab] Admin debug", {
+          uid: auth.currentUser.uid,
+          email: auth.currentUser.email,
+          exists: snap.exists(),
+          data: snap.exists() ? snap.data() : null
+        });
+        if (!snap.exists()) {
+           console.warn("Usuário autenticado sem registro em adminUsers - Ações de delete/update podem falhar.");
+        }
+      } catch (err) {
+        console.error("Erro lendo adminUsers para debug:", err);
+      }
+    }
+    loadAdminDebug();
+  }, []);
 
   const filters = ['Todos', 'Pendentes', 'Confirmados', 'Em execução', 'Finalizados', 'Cancelados'];
 
@@ -37,15 +66,15 @@ export default function AdminOrdersTab({ bookings, setBookings }: AdminOrdersTab
      }
 
      if (search) {
-        const query = search.toLowerCase();
+        const query = normalizeText(search);
         filtered = filtered.filter(b => 
-           b.customerName?.toLowerCase().includes(query) || 
-           b.protocol?.toLowerCase().includes(query) ||
-           b.vehicleModel?.toLowerCase().includes(query)
+           normalizeText(b.customerName).includes(query) || 
+           normalizeText(b.protocol).includes(query) ||
+           normalizeText(b.vehicleModel).includes(query)
         );
      }
      
-     return filtered.sort((a,b) => new Date(`${b.date}T${b.time}`).getTime() - new Date(`${a.date}T${a.time}`).getTime());
+     return [...filtered].sort((a,b) => new Date(`${b.date}T${b.time}`).getTime() - new Date(`${a.date}T${a.time}`).getTime());
   };
 
   const statusOptions = [
@@ -59,65 +88,152 @@ export default function AdminOrdersTab({ bookings, setBookings }: AdminOrdersTab
     { value: RequestStatus.CANCELED, icon: XCircle, label: 'Cancelado', desc: 'Não vai mais acontecer.' },
   ];
 
-  const handleUpdateStatus = async (status: RequestStatus) => {
-    if (!selectedOrder) return;
+  const handleUpdateStatusClick = async (status: RequestStatus) => {
+    console.log("[AdminOrdersTab] Clique status", selectedOrder?.id);
+    if (!selectedOrder?.id) {
+       showToast('Pedido inválido: ID ausente.', 'error');
+       return;
+    }
     
+    if (status === selectedOrder.status) {
+       showToast('Este pedido já está com esse status.', 'info');
+       setShowStatusModal(false);
+       return;
+    }
+
     if (status === RequestStatus.FINISHED || status === RequestStatus.CANCELED) {
        if (!window.confirm(`Tem certeza que deseja mudar para ${status}?`)) return;
     }
 
+    setActionLoading(`status-${selectedOrder.id}`);
     try {
-      const { db } = await import('../../lib/firebase');
-      const { doc, updateDoc } = await import('firebase/firestore');
+      console.log("[AdminOrdersTab] Usuário Firebase atual", { uid: auth.currentUser?.uid, email: auth.currentUser?.email });
+      const now = new Date().toISOString();
       await updateDoc(doc(db, 'bookings', selectedOrder.id), {
-        status
+        status,
+        updatedAt: now,
+        statusUpdatedAt: now
       });
       setShowStatusModal(false);
       showToast(`Status atualizado para ${status}.`, 'success');
-    } catch (err) {
-      console.error(err);
-      showToast(getFirebaseFriendlyError(err, 'Erro ao atualizar status.'), 'error');
+    } catch (err: any) {
+      console.error("Erro ao atualizar status", err);
+      const errCodeStr = String(err?.code || err?.message || '');
+      if (errCodeStr.includes('permission-denied')) {
+        showToast("Sem permissão para alterar status. Seu usuário precisa ter role technician, attendant, manager ou owner em adminUsers.", "error");
+      } else {
+        showToast(getFirebaseFriendlyError(err, 'Erro ao atualizar status.'), 'error');
+      }
+    } finally {
+      setActionLoading(null);
     }
   };
 
-  const handleCancel = async (booking: BookingRequest) => {
-     if (window.confirm('Tem certeza que deseja cancelar este agendamento?')) {
-        try {
-          const { db } = await import('../../lib/firebase');
-          const { doc, updateDoc } = await import('firebase/firestore');
-          await updateDoc(doc(db, 'bookings', booking.id), {
-            status: RequestStatus.CANCELED
-          });
-          showToast('Agendamento cancelado.', 'success');
-        } catch (err) {
-          console.error(err);
-          showToast(getFirebaseFriendlyError(err, 'Erro ao cancelar agendamento.'), 'error');
-        }
+  const handleCancelClick = (booking: BookingRequest) => {
+     console.log("[AdminOrdersTab] Clique cancelar", booking);
+     if (!booking.id) {
+        showToast('Pedido inválido: ID ausente.', 'error');
+        return;
      }
+     if (booking.status === RequestStatus.CANCELED) {
+        showToast('Este pedido já está cancelado.', 'info');
+        return;
+     }
+     setConfirmAction({ type: 'cancel', booking });
   };
 
-  const handleDelete = async (booking: BookingRequest) => {
-     if (window.confirm('Excluir este agendamento permanentemente? Esta ação não pode ser desfeita.')) {
-        try {
-          const { db } = await import('../../lib/firebase');
-          const { doc, deleteDoc } = await import('firebase/firestore');
-          await deleteDoc(doc(db, 'bookings', booking.id));
-          showToast('Agendamento excluído.', 'success');
-        } catch (err) {
-          console.error(err);
-          showToast(getFirebaseFriendlyError(err, 'Erro ao excluir agendamento.'), 'error');
-        }
+  const executeCancelBooking = async () => {
+    if (!confirmAction) return;
+    const { booking } = confirmAction;
+    
+    console.log("[AdminOrdersTab] Executando cancelamento", {
+      id: booking.id,
+      protocol: booking.protocol,
+      currentStatus: booking.status
+    });
+
+    setActionLoading(`cancel-${booking.id}`);
+    try {
+      console.log("[AdminOrdersTab] Usuário Firebase atual", { uid: auth.currentUser?.uid, email: auth.currentUser?.email });
+      const now = new Date().toISOString();
+      await updateDoc(doc(db, 'bookings', booking.id), {
+        status: RequestStatus.CANCELED,
+          canceledAt: now,
+          updatedAt: now
+      });
+      showToast('Agendamento cancelado com sucesso.', 'success');
+      setConfirmAction(null);
+    } catch (err: any) {
+      console.error("[AdminOrdersTab] Erro ao cancelar", err);
+      const errCodeStr = String(err?.code || err?.message || '');
+      if (errCodeStr.includes('permission-denied')) {
+        showToast("Sem permissão para cancelar. Seu usuário precisa ter role technician, attendant, manager ou owner em adminUsers.", "error");
+      } else {
+        showToast(getFirebaseFriendlyError(err, 'Erro ao cancelar agendamento.'), 'error');
+      }
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeleteClick = (booking: BookingRequest) => {
+     console.log("[AdminOrdersTab] Clique excluir", booking);
+     if (!booking.id) {
+        showToast('Pedido inválido: ID ausente.', 'error');
+        return;
      }
+     setConfirmAction({ type: 'delete', booking });
+  };
+
+  const executeDeleteBooking = async () => {
+    if (!confirmAction) return;
+    const { booking } = confirmAction;
+
+    console.log("[AdminOrdersTab] Executando exclusão", {
+      id: booking.id,
+      protocol: booking.protocol
+    });
+
+    setActionLoading(`delete-${booking.id}`);
+    try {
+      console.log("[AdminOrdersTab] Usuário Firebase atual", { uid: auth.currentUser?.uid, email: auth.currentUser?.email });
+      await deleteDoc(doc(db, 'bookings', booking.id));
+      showToast('Agendamento excluído com sucesso.', 'success');
+      setConfirmAction(null);
+    } catch (err: any) {
+      console.error("[AdminOrdersTab] Erro ao excluir", err);
+      const errCodeStr = String(err?.code || err?.message || '');
+      if (errCodeStr.includes('permission-denied')) {
+        showToast("Sem permissão para excluir. Seu usuário precisa ter role manager ou owner em adminUsers.", "error");
+      } else {
+        showToast(getFirebaseFriendlyError(err, 'Erro ao excluir agendamento.'), 'error');
+      }
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const openWhatsApp = (booking: BookingRequest) => {
+     console.log("[AdminOrdersTab] Clique WhatsApp", booking.customerPhone);
      const rawPhone = booking.customerPhone?.replace(/\D/g, '');
      if (!rawPhone || rawPhone.length < 10) {
         showToast('WhatsApp inválido para este cliente.', 'error');
         return;
      }
-     const message = `Olá ${booking.customerName}, aqui é da SR Details. Sobre seu agendamento ${booking.protocol} do veículo ${booking.vehicleModel} para ${booking.date.split('-').reverse().join('/')} às ${booking.time}...`;
-     window.open(`https://wa.me/55${rawPhone}?text=${encodeURIComponent(message)}`, '_blank');
+     
+     let formattedPhone = rawPhone;
+     if ((rawPhone.length === 10 || rawPhone.length === 11) && !rawPhone.startsWith('55')) {
+        formattedPhone = `55${rawPhone}`;
+     }
+     
+     const formattedDate = booking.date ? booking.date.split('-').reverse().join('/') : 'Data não informada';
+     const message = `Olá ${booking.customerName}, aqui é da SR Details.\nSobre seu agendamento ${booking.protocol}:\n\nServiço: ${booking.serviceName}\nVeículo: ${booking.vehicleModel}\nData: ${formattedDate} às ${booking.time}\nStatus atual: ${booking.status}\n\nComo posso te ajudar?`;
+     
+     try {
+       window.open(`https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
+     } catch (e) {
+       showToast('Não foi possível abrir o WhatsApp. Verifique o bloqueio de pop-ups.', 'error');
+     }
   };
 
   return (
@@ -193,7 +309,7 @@ export default function AdminOrdersTab({ bookings, setBookings }: AdminOrdersTab
                   </div>
                   <div className="flex justify-between items-center text-sm">
                      <span className="text-[#6F7175]">Agendado para</span>
-                     <span className="text-[#F4F4F2] font-bold">{booking.date.split('-').reverse().join('/')} às {booking.time}</span>
+                     <span className="text-[#F4F4F2] font-bold">{(booking.date || '').split('-').reverse().join('/') || 'Não informada'} às {booking.time || ''}</span>
                   </div>
                </div>
 
@@ -203,17 +319,78 @@ export default function AdminOrdersTab({ bookings, setBookings }: AdminOrdersTab
                </div>
 
                {expandedDetailsId === booking.id && (
-                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mb-4 bg-[#111114] p-3 rounded-xl border border-white/5 text-xs text-[#A7A7A3] space-y-2">
-                    <p><strong className="text-[#F4F4F2]">Telefone:</strong> {booking.customerPhone}</p>
-                    <p><strong className="text-[#F4F4F2]">Cor/Placa:</strong> {booking.vehicleColor} / {booking.plate || 'N/A'}</p>
-                    <p><strong className="text-[#F4F4F2]">Adicionais:</strong> {booking.addOns?.map(a => a.name).join(', ') || 'Nenhum'}</p>
-                    <p><strong className="text-[#F4F4F2]">Notas:</strong> {booking.notes || 'Sem observações'}</p>
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mb-4 bg-[#111114] p-4 rounded-xl border border-white/5 text-xs text-[#A7A7A3] space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                       <div>
+                          <span className="block text-[10px] uppercase font-bold text-[#6F7175] mb-1">Telefone</span>
+                          <span className="text-[#F4F4F2]">{booking.customerPhone || 'Não informado'}</span>
+                       </div>
+                       <div>
+                          <span className="block text-[10px] uppercase font-bold text-[#6F7175] mb-1">E-mail</span>
+                          <span className="text-[#F4F4F2]">{booking.customerEmail || 'Não informado'}</span>
+                       </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 pb-3 border-b border-white/5">
+                       <div>
+                          <span className="block text-[10px] uppercase font-bold text-[#6F7175] mb-1">Veículo / Ano</span>
+                          <span className="text-[#F4F4F2]">{booking.vehicleModel} {booking.vehicleYear ? `/ ${booking.vehicleYear}` : ''}</span>
+                       </div>
+                       <div>
+                          <span className="block text-[10px] uppercase font-bold text-[#6F7175] mb-1">Cor / Placa</span>
+                          <span className="text-[#F4F4F2]">{booking.vehicleColor || 'N/A'} / {booking.plate || 'N/A'}</span>
+                       </div>
+                    </div>
+                    <div>
+                       <span className="block text-[10px] uppercase font-bold text-[#6F7175] mb-1">Condição do Carro</span>
+                       <span className="text-[#F4F4F2]">{booking.carCondition || 'Não informado'}</span>
+                    </div>
+                    <div className="pt-3 border-t border-white/5">
+                       <span className="block text-[10px] uppercase font-bold text-[#6F7175] mb-1">Serviço / Categoria</span>
+                       <span className="text-[#F4F4F2] block">{booking.serviceName}</span>
+                       <span className="text-[#FFD000] font-bold block">{booking.selectedPriceLabel} - {formatCurrency(booking.servicePrice)}</span>
+                    </div>
+                    {booking.addOns && booking.addOns.length > 0 && (
+                       <div>
+                          <span className="block text-[10px] uppercase font-bold text-[#6F7175] mb-1">Adicionais</span>
+                          <ul className="space-y-1">
+                             {booking.addOns.map(a => (
+                                <li key={a.id} className="text-[#F4F4F2] flex justify-between">
+                                   <span>• {a.name}</span>
+                                   <span className="text-[#FFD000]">{formatCurrency(a.price)}</span>
+                                </li>
+                             ))}
+                          </ul>
+                       </div>
+                    )}
+                    <div className="pt-3 border-t border-white/5 grid grid-cols-2 gap-3">
+                       <div>
+                          <span className="block text-[10px] uppercase font-bold text-[#6F7175] mb-1">Hora Inicio</span>
+                          <span className="text-[#F4F4F2]">{booking.startTime || 'Não info'}</span>
+                       </div>
+                       <div>
+                          <span className="block text-[10px] uppercase font-bold text-[#6F7175] mb-1">Hora Fim</span>
+                          <span className="text-[#F4F4F2]">{booking.endTime || 'Não info'}</span>
+                       </div>
+                    </div>
+                    {booking.serviceSnapshot && (
+                       <div className="pt-3 border-t border-white/5">
+                         <span className="block text-[10px] uppercase font-bold text-[#6F7175] mb-1">Tempo Estimado</span>
+                         <span className="text-[#F4F4F2]">
+                            {booking.serviceSnapshot.durationMinutes ? `${booking.serviceSnapshot.durationMinutes} minutos` : ''} 
+                            {booking.serviceSnapshot.durationDays ? ` / ${booking.serviceSnapshot.durationDays} dias` : ''}
+                         </span>
+                       </div>
+                    )}
+                    <div>
+                       <span className="block text-[10px] uppercase font-bold text-[#6F7175] mb-1">Observações</span>
+                       <span className="text-[#F4F4F2] italic">{booking.notes || 'Nenhuma observação.'}</span>
+                    </div>
                   </motion.div>
                )}
 
                {/* Action Buttons */}
                <div className="grid grid-cols-4 gap-2 border-t border-white/5 pt-4">
-                  <button onClick={() => setExpandedDetailsId(p => p === booking.id ? null : booking.id)} className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-colors ${expandedDetailsId === booking.id ? 'bg-[#FFD000]/10 border-[#FFD000]/30 text-[#FFD000]' : 'bg-[#111114] border-white/5 text-[#A7A7A3] hover:text-[#F4F4F2]'}`}>
+                  <button onClick={() => { console.log("[AdminOrdersTab] Clique detalhes", booking.id); setExpandedDetailsId(p => p === booking.id ? null : booking.id); }} className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-colors ${expandedDetailsId === booking.id ? 'bg-[#FFD000]/10 border-[#FFD000]/30 text-[#FFD000]' : 'bg-[#111114] border-white/5 text-[#A7A7A3] hover:text-[#F4F4F2]'}`}>
                      <Info size={16} />
                      <span className="text-[9px] uppercase tracking-wider font-bold mt-1">Detalhes</span>
                   </button>
@@ -221,13 +398,13 @@ export default function AdminOrdersTab({ bookings, setBookings }: AdminOrdersTab
                      <MessageCircle size={16} />
                      <span className="text-[9px] uppercase tracking-wider font-bold mt-1">WhatsApp</span>
                   </button>
-                  <button onClick={() => handleCancel(booking)} disabled={booking.status === RequestStatus.CANCELED || booking.status === RequestStatus.FINISHED} className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#111114] border border-white/5 text-[#A7A7A3] hover:text-red-500 hover:border-red-500/30 transition-colors disabled:opacity-30 disabled:pointer-events-none">
-                     <XCircle size={16} />
-                     <span className="text-[9px] uppercase tracking-wider font-bold mt-1">Cancelar</span>
+                  <button onClick={() => handleCancelClick(booking)} disabled={actionLoading !== null || booking.status === RequestStatus.CANCELED || booking.status === RequestStatus.FINISHED} className={`flex flex-col items-center justify-center p-2 rounded-xl bg-[#111114] border border-white/5 text-[#A7A7A3] transition-colors disabled:pointer-events-none ${actionLoading === `cancel-${booking.id}` ? 'opacity-50' : 'hover:text-red-500 hover:border-red-500/30'}`}>
+                     <XCircle size={16} className={actionLoading === `cancel-${booking.id}` ? 'animate-pulse text-red-500' : ''} />
+                     <span className="text-[9px] uppercase tracking-wider font-bold mt-1">{actionLoading === `cancel-${booking.id}` ? 'Canc...' : 'Cancelar'}</span>
                   </button>
-                  <button onClick={() => handleDelete(booking)} className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#111114] border border-white/5 text-[#A7A7A3] hover:text-red-600 hover:border-red-600/30 transition-colors">
-                     <Trash2 size={16} />
-                     <span className="text-[9px] uppercase tracking-wider font-bold mt-1">Excluir</span>
+                  <button onClick={() => handleDeleteClick(booking)} disabled={actionLoading !== null} className={`flex flex-col items-center justify-center p-2 rounded-xl bg-[#111114] border border-white/5 text-[#A7A7A3] transition-colors disabled:pointer-events-none ${actionLoading === `delete-${booking.id}` ? 'opacity-50' : 'hover:text-red-600 hover:border-red-600/30'}`}>
+                     <Trash2 size={16} className={actionLoading === `delete-${booking.id}` ? 'animate-pulse text-red-600' : ''} />
+                     <span className="text-[9px] uppercase tracking-wider font-bold mt-1">{actionLoading === `delete-${booking.id}` ? 'Excl...' : 'Excluir'}</span>
                   </button>
                </div>
             </motion.div>
@@ -267,15 +444,18 @@ export default function AdminOrdersTab({ bookings, setBookings }: AdminOrdersTab
                         return (
                            <button 
                              key={opt.value}
-                             onClick={() => handleUpdateStatus(opt.value as RequestStatus)}
-                             className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all text-left group ${isCurrent ? 'bg-[#FFD000]/10 border-[#FFD000]/30' : 'bg-[#111114] border-white/5 hover:border-white/10'}`}
+                             disabled={actionLoading !== null}
+                             onClick={() => handleUpdateStatusClick(opt.value as RequestStatus)}
+                             className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all text-left group disabled:opacity-50 disabled:pointer-events-none ${isCurrent ? 'bg-[#FFD000]/10 border-[#FFD000]/30' : 'bg-[#111114] border-white/5 hover:border-white/10'}`}
                            >
                               <div className="flex items-center gap-4">
                                  <div className={`w-10 h-10 rounded-full flex items-center justify-center border shadow-inner ${isCurrent ? 'bg-[#FFD000] border-[#FFE066] text-[#050505]' : 'bg-[#1A1810] border-white/5 text-[#A7A7A3] group-hover:text-[#F4F4F2]'}`}>
-                                    <Icon size={18} />
+                                    <Icon size={18} className={actionLoading === `status-${selectedOrder.id}` && !isCurrent ? 'animate-pulse text-[#FFD000]' : ''} />
                                  </div>
                                  <div className="flex flex-col">
-                                    <span className={`text-sm font-black ${isCurrent ? 'text-[#FFE066]' : 'text-[#F4F4F2]'}`}>{opt.label}</span>
+                                    <span className={`text-sm font-black ${isCurrent ? 'text-[#FFE066]' : 'text-[#F4F4F2]'}`}>
+                                      {actionLoading === `status-${selectedOrder.id}` && !isCurrent ? 'Atualizando...' : opt.label}
+                                    </span>
                                     <span className="text-[10px] text-[#6F7175]">{opt.desc}</span>
                                  </div>
                               </div>
@@ -289,6 +469,78 @@ export default function AdminOrdersTab({ bookings, setBookings }: AdminOrdersTab
           </>
         )}
       </AnimatePresence>
+      <AnimatePresence>
+        {confirmAction && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setConfirmAction(null)}
+              className="fixed inset-0 bg-[#050505]/80 backdrop-blur-sm z-50 pointer-events-auto"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 40 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 40 }}
+              className="fixed bottom-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2 left-0 right-0 sm:left-1/2 sm:-translate-x-1/2 sm:w-full sm:max-w-md z-[100] pointer-events-auto flex flex-col justify-end sm:justify-center p-4"
+            >
+               <div className="bg-[#0B0B0D] border border-white/10 rounded-[2rem] p-6 shadow-2xl relative overflow-hidden flex flex-col">
+                  <div className="flex justify-between items-center mb-4">
+                     <h3 className="text-lg font-black text-[#F4F4F2] tracking-tight">
+                        {confirmAction.type === 'cancel' ? 'Confirmar Cancelamento' : 'Confirmar Exclusão'}
+                     </h3>
+                     <button onClick={() => setConfirmAction(null)} className="w-8 h-8 rounded-full bg-[#111114] border border-white/5 text-[#6F7175] flex items-center justify-center hover:text-white transition-colors">
+                        <X size={16} />
+                     </button>
+                  </div>
+                  
+                  <div className="mb-6 p-4 rounded-xl bg-[#111114] border border-white/5">
+                     <div className="flex items-center gap-3 mb-2">
+                         <div className={`p-2 rounded-lg ${confirmAction.type === 'cancel' ? 'bg-red-500/10 text-red-500' : 'bg-red-600/10 text-red-600'}`}>
+                            {confirmAction.type === 'cancel' ? <XCircle size={20} /> : <Trash2 size={20} />}
+                         </div>
+                         <div>
+                            <span className="block text-[10px] text-[#A7A7A3] uppercase font-bold tracking-widest">{confirmAction.booking.protocol}</span>
+                            <span className="font-bold text-[#F4F4F2] text-sm">{confirmAction.booking.customerName}</span>
+                         </div>
+                     </div>
+                     <p className="text-sm text-[#A7A7A3] mt-3">
+                        {confirmAction.type === 'cancel' 
+                           ? "Tem certeza que deseja cancelar este agendamento? Ele não poderá ser desfeito facilmente." 
+                           : "Excluir este agendamento permanentemente? Esta ação não pode ser desfeita."}
+                     </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 mt-auto">
+                     <button 
+                        onClick={() => setConfirmAction(null)}
+                         className="flex items-center justify-center py-3 rounded-xl bg-[#111114] border border-white/5 text-sm font-bold text-[#F4F4F2] hover:bg-white/5 transition-colors"
+                     >
+                        Voltar
+                     </button>
+                     <button 
+                        onClick={confirmAction.type === 'cancel' ? executeCancelBooking : executeDeleteBooking}
+                        disabled={actionLoading !== null}
+                        className={`flex items-center justify-center py-3 rounded-xl border text-sm font-bold transition-all disabled:opacity-50 disabled:pointer-events-none relative overflow-hidden group ${
+                           confirmAction.type === 'cancel' 
+                              ? 'bg-red-500 text-white border-red-600 hover:bg-red-600' 
+                              : 'bg-red-600 text-white border-red-700 hover:bg-red-700'
+                        }`}
+                     >
+                        {actionLoading === `cancel-${confirmAction.booking.id}` || actionLoading === `delete-${confirmAction.booking.id}` ? (
+                           <span className="animate-pulse">Aguarde...</span>
+                        ) : (
+                           confirmAction.type === 'cancel' ? 'Confirmar Cancelamento' : 'Excluir Definitivamente'
+                        )}
+                     </button>
+                  </div>
+               </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
     </div>
   )
 }

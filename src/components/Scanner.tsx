@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { CheckCircle2, MessageCircle, RefreshCcw, ScanLine, ArrowRight, ChevronLeft } from 'lucide-react';
 import { View, Service } from '../types.ts';
 import { getPriceDisplay } from '../utils/pricing.ts';
+import { safeText } from '../utils/safeData.ts';
 
 interface ScannerProps {
   onNavigate: (view: View, params?: { serviceId?: string }) => void;
@@ -18,28 +19,31 @@ export default function Scanner({ onNavigate, services, brand }: ScannerProps) {
 
   const mapRecommendation = () => {
     let rec = 'lavagem-tecnica';
+    const safeObj = safeText(objective);
+    const safeLevel = safeText(level);
+    const safeVeh = safeText(vehicle);
 
-    if (objective.includes('Manutenção')) rec = 'lavagem-manutencao';
-    else if (objective.includes('Lavagem completa')) rec = 'lavagem-detalhada';
-    else if (objective.includes('Interior sujo')) rec = 'interna-detalhada';
-    else if (objective.includes('Mau cheiro') || objective.includes('Bancos manchados')) rec = 'higienizacao-tecidos';
-    else if (objective.includes('Pintura sem brilho')) rec = 'polimento-tecnico';
-    else if (objective.includes('proteger a pintura')) rec = 'vitrificacao';
-    else if (objective.includes('venda')) rec = 'sr-start';
-    else if (objective.includes('Pacote completo')) rec = 'sr-pro';
-    else if (objective.includes('Máxima proteção') || level.includes('Máxima proteção')) rec = 'sr-diamond';
-    else if (objective.includes('Motor')) rec = 'tratamento-motor';
+    if (safeObj.includes('Manutenção')) rec = 'lavagem-manutencao';
+    else if (safeObj.includes('Lavagem completa')) rec = 'lavagem-detalhada';
+    else if (safeObj.includes('Interior sujo')) rec = 'interna-detalhada';
+    else if (safeObj.includes('Mau cheiro') || safeObj.includes('Bancos manchados')) rec = 'higienizacao-tecidos';
+    else if (safeObj.includes('Pintura sem brilho')) rec = 'polimento-tecnico';
+    else if (safeObj.includes('proteger a pintura')) rec = 'vitrificacao';
+    else if (safeObj.includes('venda')) rec = 'sr-start';
+    else if (safeObj.includes('Pacote completo')) rec = 'sr-pro';
+    else if (safeObj.includes('Máxima proteção') || safeLevel.includes('Máxima proteção')) rec = 'sr-diamond';
+    else if (safeObj.includes('Motor')) rec = 'tratamento-motor';
     
     // level overrides
     if (rec === 'sr-start' || rec === 'lavagem-detalhada' || rec === 'lavagem-tecnica') {
-        if (level === 'Premium') rec = 'sr-premium';
-        if (level === 'Máxima proteção') rec = 'sr-diamond';
-        if (level === 'Intermediário' && objective.includes('venda')) rec = 'sr-plus';
+        if (safeLevel === 'Premium') rec = 'sr-premium';
+        if (safeLevel === 'Máxima proteção') rec = 'sr-diamond';
+        if (safeLevel === 'Intermediário' && safeObj.includes('venda')) rec = 'sr-plus';
     }
     
     // vehicle override
-    if (vehicle === 'Moto') {
-        rec = (objective.includes('Pacote') || level === 'Premium' || level === 'Máxima proteção') ? 'pacote-sr-motos' : 'lavagem-moto';
+    if (safeVeh === 'Moto') {
+        rec = (safeObj.includes('Pacote') || safeLevel === 'Premium' || safeLevel === 'Máxima proteção') ? 'pacote-sr-motos' : 'lavagem-moto';
     }
     
     return rec;

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Car, Settings, CalendarRange, Smartphone, Send, 
-  CheckCircle, ChevronRight, ChevronLeft, ShieldCheck, Tag, Check, Calendar, Clock
+  CheckCircle, ChevronRight, ChevronLeft, ShieldCheck, Tag, Check, Calendar, Clock, Search, X
 } from 'lucide-react';
 import { ADDONS } from '../constants.ts';
 import { View, BookingRequest, RequestStatus, Service, ScheduleSettings } from '../types.ts';
@@ -15,7 +15,9 @@ import {
   calculateEndTime,
   hasCapacityForSlot
 } from '../lib/scheduleEngine.ts';
-import { formatCurrency } from '../utils/pricing.ts';
+import { formatCurrency, getPriceDisplay } from '../utils/pricing.ts';
+import { getFirebaseFriendlyError } from '../utils/firebaseErrors';
+import { safeArray, safeText, safeNumber, normalizeText } from '../utils/safeData.ts';
 
 import CalendarModal from './CalendarModal.tsx';
 
@@ -38,9 +40,35 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
+  const [serviceSearch, setServiceSearch] = useState('');
+  const [serviceCategoryFilter, setServiceCategoryFilter] = useState('Todos');
+
   // default to first active service or undefined if empty
   const activeServices = useMemo(() => services.filter(s => s.active), [services]);
   const defaultServiceId = activeServices.length > 0 ? activeServices[0].id : '';
+
+  const filteredModalServices = useMemo(() => {
+    return activeServices.filter(s => {
+      if (serviceCategoryFilter !== 'Todos' && safeText(s.categoryName) !== serviceCategoryFilter) return false;
+      if (!serviceSearch) return true;
+      const q = normalizeText(serviceSearch);
+      const searchableText = [
+        safeText(s.name),
+        safeText(s.categoryName),
+        safeText(s.shortDescription),
+        ...safeArray(s.benefits),
+        ...safeArray(s.includes),
+        ...safeArray(s.priceOptions).map(p => p.label)
+      ].map(normalizeText).join(' ');
+      return searchableText.includes(q);
+    });
+  }, [activeServices, serviceSearch, serviceCategoryFilter]);
+
+  const uniqueCategories = useMemo(() => {
+    const cats = new Set(activeServices.map(s => safeText(s.categoryName)).filter(Boolean));
+    return ['Todos', ...Array.from(cats)];
+  }, [activeServices]);
 
   const [formData, setFormData] = useState({
     serviceId: defaultServiceId,
@@ -73,7 +101,8 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
       return { 
         ...prev, 
         serviceId: nextServiceId,
-        vehicleType: prev.serviceId && prev.serviceId !== nextServiceId ? '' : prev.vehicleType
+        vehicleType: prev.serviceId && prev.serviceId !== nextServiceId ? '' : prev.vehicleType,
+        addons: Array.isArray(prev.addons) ? prev.addons : []
       };
     });
   }, [activeServices, draftServiceId]);
@@ -150,7 +179,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
   }, [selectedServiceObj, formData.vehicleType]);
 
   const addonsTotal = useMemo(() => {
-    return formData.addons.reduce((acc, addonId) => {
+    return safeArray(formData.addons).reduce((acc, addonId) => {
       const a = ADDONS.find(x => x.id === addonId);
       return acc + (a ? a.price : 0);
     }, 0);
@@ -163,7 +192,13 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
 
     if (currentStep === 1) {
       if (!formData.serviceId) newErrors.serviceId = 'Escolha um serviço para continuar.';
-      if (!formData.vehicleType) newErrors.vehicleType = 'Selecione a categoria do veículo para calcular o valor.';
+      
+      const priceOptions = safeArray(selectedServiceObj?.priceOptions);
+      if (priceOptions.length === 0) {
+        newErrors.vehicleType = 'Este serviço ainda não possui opções de preço cadastradas.';
+      } else if (!formData.vehicleType) {
+        newErrors.vehicleType = 'Selecione a categoria do veículo para calcular o valor.';
+      }
     }
     
     if (currentStep === 2) {
@@ -217,10 +252,11 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
 
   const toggleAddon = (addonId: string) => {
     setFormData(prev => {
-      if (prev.addons.includes(addonId)) {
-        return { ...prev, addons: prev.addons.filter(id => id !== addonId) };
+      const currentAddons = safeArray(prev.addons);
+      if (currentAddons.includes(addonId)) {
+        return { ...prev, addons: currentAddons.filter(id => id !== addonId) };
       } else {
-        return { ...prev, addons: [...prev.addons, addonId] };
+        return { ...prev, addons: [...currentAddons, addonId] };
       }
     });
   };
@@ -250,7 +286,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
 
     const endTimeVal = calculateEndTime(formData.desiredTime, minutes);
 
-    const addonsObjects = formData.addons.map(id => {
+    const addonsObjects = safeArray(formData.addons).map(id => {
        const a = ADDONS.find(x => x.id === id);
        return a ? { id: a.id, name: a.name, price: a.price } : { id, name: id, price: 0 };
     });
@@ -268,11 +304,11 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
       vehicleColor: formData.carColor,
       carCondition: formData.carCondition,
       serviceId: formData.serviceId,
-      serviceName: selectedServiceObj.name,
-      serviceDurationMinutes: minutes,
-      serviceDurationDays: days,
-      selectedPriceLabel: basePriceObj.label,
-      servicePrice: basePriceObj.price,
+      serviceName: safeText(selectedServiceObj.name) || 'Serviço sem nome',
+      serviceDurationMinutes: safeNumber(minutes),
+      serviceDurationDays: safeNumber(days),
+      selectedPriceLabel: safeText(basePriceObj.label),
+      servicePrice: safeNumber(basePriceObj.price),
       addOns: addonsObjects,
       date: formData.desiredDate,
       time: formData.desiredTime,
@@ -281,15 +317,15 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
       notes: '',
       status: RequestStatus.REQUESTED,
       createdAt: new Date().toISOString(),
-      totalPrice: totalPrice,
+      totalPrice: safeNumber(totalPrice),
       serviceSnapshot: {
         serviceId: formData.serviceId,
-        serviceName: selectedServiceObj.name,
-        priceOptionLabel: basePriceObj.label,
-        price: basePriceObj.price,
-        deliveryLabel: selectedServiceObj.deliveryLabel,
-        durationMinutes: minutes,
-        durationDays: days,
+        serviceName: safeText(selectedServiceObj.name) || 'Serviço sem nome',
+        priceOptionLabel: safeText(basePriceObj.label),
+        price: safeNumber(basePriceObj.price),
+        deliveryLabel: safeText(selectedServiceObj.deliveryLabel),
+        durationMinutes: safeNumber(minutes),
+        durationDays: safeNumber(days),
       }
     };
     
@@ -308,7 +344,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
       }, 2500);
     } catch (err) {
       console.error(err);
-      setErrors({ serverError: "Erro ao criar agendamento. Tente novamente." });
+      setErrors({ serverError: getFirebaseFriendlyError(err, "Erro ao criar agendamento. Tente novamente.") });
     }
   };
 
@@ -360,6 +396,13 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
      { id: 5, label: 'Resumo' }
   ];
 
+  const otherServices = useMemo(() => {
+    return activeServices
+      .filter(s => s.id !== formData.serviceId)
+      .sort((a, b) => (Number(b.featuredOnHome) - Number(a.featuredOnHome)) || ((safeNumber(a.displayOrder) || 99) - (safeNumber(b.displayOrder) || 99)))
+      .slice(0, 6);
+  }, [activeServices, formData.serviceId]);
+
   return (
     <div id="booking-view" className="pb-[140px] pt-8 px-6 min-h-screen relative">
       <header className="mb-8 relative z-10">
@@ -396,30 +439,107 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
             {step === 1 && (
                <motion.div key="step1" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
                   {/* Serviço Principal */}
-                  <div id="field-serviceId" className={`bg-[#0B0B0D]/90 backdrop-blur-xl p-6 rounded-[2rem] border shadow-2xl relative overflow-hidden transition-colors ${errors.serviceId ? 'border-red-500/40 bg-red-500/5' : 'border-white/5'}`}>
+                  <div id="field-serviceId" className={`bg-[#0B0B0D]/90 backdrop-blur-xl p-5 sm:p-6 rounded-[2rem] border shadow-2xl relative overflow-hidden transition-colors ${errors.serviceId ? 'border-red-500/40 bg-red-500/5' : 'border-[#FFD000]/20'}`}>
                      <div className="absolute top-0 right-0 w-32 h-32 bg-[#FFD000]/5 blur-3xl rounded-full pointer-events-none"></div>
-                     <h3 className="text-xs font-black text-[#6F7175] mb-5 flex items-center gap-2 uppercase tracking-[3px] relative z-10">
-                       <ShieldCheck size={14} className="text-[#FFD000]" /> Serviço Principal
-                     </h3>
+                     <div className="flex justify-between items-center mb-4 relative z-10">
+                        <h3 className="text-[11px] sm:text-xs font-black text-[#6F7175] flex items-center gap-2 uppercase tracking-[3px]">
+                          <ShieldCheck size={14} className="text-[#FFD000]" /> Serviço Principal
+                        </h3>
+                     </div>
                      <div className="relative z-10">
-                        <div className="relative">
-                           <select
-                              name="serviceId"
-                              value={formData.serviceId}
-                              onChange={(e) => {
-                                 handleChange(e);
-                                 setFormData(p => ({ ...p, vehicleType: '' })); // Reset type
-                              }}
-                              className={`w-full bg-[#050505] border rounded-2xl px-5 py-4 text-[#F4F4F2] focus:border-[#FFD000]/50 outline-none text-sm transition-all appearance-none shadow-inner ${errors.serviceId ? 'border-red-500/50' : 'border-white/10'}`}
+                        {selectedServiceObj ? (
+                           <div className="bg-[#050505] border border-white/5 rounded-2xl p-4 shadow-inner flex flex-col gap-3 relative">
+                              <div className="flex justify-between items-start gap-4">
+                                 <div className="flex-1 min-w-0">
+                                    <span className="inline-block text-[8px] uppercase tracking-widest text-[#FFD000] font-black bg-[#FFD000]/10 px-2 py-0.5 rounded-sm mb-1.5">
+                                       {safeText(selectedServiceObj.categoryName) || 'Serviço'}
+                                    </span>
+                                    <h4 className="text-[15px] sm:text-base font-black text-[#F4F4F2] leading-tight truncate">
+                                       {safeText(selectedServiceObj.name) || 'Serviço Selecionado'}
+                                    </h4>
+                                    <div className="flex flex-wrap items-center gap-2 mt-2 text-[10px] uppercase font-bold tracking-wider">
+                                       <span className="text-[#FFE066]">{getPriceDisplay(safeArray(selectedServiceObj.priceOptions))}</span>
+                                       <span className="text-[#6F7175] hidden sm:inline-block">•</span>
+                                       <span className="text-[#A7A7A3] flex items-center gap-1">
+                                          <Clock size={10} className="text-[#FFD000]" />
+                                          {safeText(selectedServiceObj.deliveryLabel) || 'Consultar'}
+                                       </span>
+                                    </div>
+                                 </div>
+                                 <button
+                                   type="button"
+                                   onClick={() => setIsServiceModalOpen(true)}
+                                   className="text-[9px] sm:text-[10px] font-bold text-[#FFD000] uppercase tracking-wider bg-[#FFD000]/10 px-3 py-1.5 rounded-full hover:bg-[#FFD000]/20 transition-colors shrink-0 border border-[#FFD000]/20"
+                                 >
+                                   Trocar
+                                 </button>
+                              </div>
+                              {safeText(selectedServiceObj.shortDescription) && (
+                                <p className="text-[#A7A7A3] text-[11px] line-clamp-1 leading-relaxed border-t border-white/5 pt-2 mt-1">
+                                  {safeText(selectedServiceObj.shortDescription)}
+                                </p>
+                              )}
+                           </div>
+                        ) : (
+                           <button 
+                             type="button"
+                             onClick={() => setIsServiceModalOpen(true)}
+                             className="w-full bg-[#050505] border border-white/10 rounded-2xl p-6 flex flex-col items-center justify-center gap-3 hover:border-[#FFD000]/30 transition-all text-[#A7A7A3]"
                            >
-                              <option value="" disabled>Selecione um serviço</option>
-                              {services.filter(s => s.active).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                           </select>
-                           <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none text-[#FFD000]">▼</div>
-                        </div>
-                        {errors.serviceId && <p className="text-red-400 text-xs mt-2">{errors.serviceId}</p>}
+                             <Search size={24} className="text-white/20" />
+                             <span className="text-sm font-bold">Clique para selecionar um serviço</span>
+                           </button>
+                        )}
+                        {errors.serviceId && <p className="text-red-400 text-xs mt-3 flex items-center gap-1.5"><X size={12} /> {errors.serviceId}</p>}
                      </div>
                   </div>
+
+                  {/* Outros serviços disponíveis */}
+                  {otherServices.length > 0 && selectedServiceObj && (
+                     <div className="space-y-3">
+                        <div className="flex items-center justify-between px-2">
+                           <div>
+                              <h4 className="text-xs font-bold text-[#F4F4F2]">Outros serviços disponíveis</h4>
+                              <p className="text-[10px] text-[#6F7175]">Toque para comparar e trocar.</p>
+                           </div>
+                           <button 
+                             type="button" 
+                             onClick={() => setIsServiceModalOpen(true)}
+                             className="text-[10px] font-bold text-[#FFD000] hover:underline"
+                           >
+                              Ver todos
+                           </button>
+                        </div>
+                        <div className="flex gap-3 overflow-x-auto pb-4 scrollbar-hide -mx-6 px-6 mask-edges">
+                           {otherServices.map(service => (
+                              <button
+                                 key={service.id}
+                                 type="button"
+                                 onClick={() => {
+                                    setFormData(p => ({
+                                       ...p,
+                                       serviceId: service.id,
+                                       vehicleType: '', // Reset vehicle type
+                                       addons: Array.isArray(p.addons) ? p.addons : []
+                                    }));
+                                    setErrors(p => ({ ...p, serviceId: '' }));
+                                 }}
+                                 className="w-[160px] sm:w-[180px] shrink-0 bg-[#0B0B0D]/50 border border-white/5 hover:border-[#FFD000]/30 hover:bg-[#0B0B0D] rounded-2xl p-3 text-left transition-all flex flex-col gap-2 relative overflow-hidden group"
+                              >
+                                 <span className="text-[8px] uppercase tracking-wider text-[#FFD000] font-black">{safeText(service.categoryName) || 'Serviço'}</span>
+                                 <h5 className="text-[13px] font-black text-[#F4F4F2] leading-tight line-clamp-1">{safeText(service.name) || 'Sem nome'}</h5>
+                                 <div className="flex flex-col gap-1 mt-1">
+                                    <span className="text-[10px] text-[#FFE066] font-bold">{getPriceDisplay(safeArray(service.priceOptions))}</span>
+                                    <span className="text-[9px] text-[#A7A7A3] flex items-center gap-1">
+                                       <Clock size={8} className="text-[#FFD000]" />
+                                       {safeText(service.deliveryLabel) || 'Consultar'}
+                                    </span>
+                                 </div>
+                              </button>
+                           ))}
+                        </div>
+                     </div>
+                  )}
 
                   {/* Categoria do Veículo (Substitui os chips apertados por cards premium) */}
                   {selectedServiceObj && (
@@ -430,14 +550,16 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
                         <p className="text-[#A7A7A3] text-xs mb-5">O valor varia conforme a categoria e tamanho do veículo.</p>
                         
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 relative z-10">
-                           {(selectedServiceObj.priceOptions || []).map(priceOption => {
+                           {safeArray(selectedServiceObj.priceOptions).length === 0 ? (
+                              <p className="text-[#A7A7A3] text-sm py-4">Este serviço ainda não possui opções de preço cadastradas.</p>
+                           ) : safeArray(selectedServiceObj.priceOptions).map(priceOption => {
                               const isSelected = formData.vehicleType === priceOption.id || formData.vehicleType === priceOption.label;
                               // Quebra labels longos para ficarem mais elegantes
-                              const labelParts = priceOption.label.split('/');
+                              const labelParts = (priceOption.label || '').split('/');
                               
                               return (
                                  <button 
-                                    key={priceOption.id}
+                                    key={priceOption.id || priceOption.label}
                                     onClick={() => setFormData(p => ({ ...p, vehicleType: priceOption.id }))}
                                     className={`p-4 rounded-2xl border flex flex-col gap-1.5 text-left transition-all min-w-0 ${isSelected ? 'bg-[#FFD000]/10 border-[#FFD000]/40 shadow-[0_0_15px_rgba(255,208,0,0.15)]' : 'bg-[#050505] border-white/5 hover:border-white/20'}`}
                                  >
@@ -477,7 +599,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
                      
                      <div className="space-y-3">
                         {ADDONS.map(addon => {
-                           const isSelected = formData.addons.includes(addon.id);
+                           const isSelected = safeArray(formData.addons).includes(addon.id);
                            return (
                               <div 
                                  key={addon.id} 
@@ -624,7 +746,7 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
                              {errors.desiredTime && <p className="text-red-400 text-[10px] mt-1.5 ml-2">{errors.desiredTime}</p>}
                              <p className="text-[10px] text-[#A7A7A3] mt-4 flex items-center justify-center gap-1 bg-white/5 py-2 rounded-lg">
                                 <Clock size={12} className="text-[#FFD000]" />
-                                Duração estimada: {selectedServiceObj.deliveryLabel}
+                                Duração estimada: {safeText(selectedServiceObj.deliveryLabel) || 'Consultar duração'}
                              </p>
                           </div>
                         )}
@@ -691,17 +813,17 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
                         <div className="flex justify-between items-start">
                            <div>
                               <span className="text-[10px] text-[#A7A7A3] uppercase tracking-widest block mb-1">Serviço Principal</span>
-                              <p className="text-[15px] font-black text-[#F4F4F2]">{selectedServiceObj.name}</p>
-                              <p className="text-xs text-[#6F7175] mt-1">{basePriceObj.label}</p>
+                              <p className="text-[15px] font-black text-[#F4F4F2]">{safeText(selectedServiceObj.name) || 'Serviço selecionado'}</p>
+                              <p className="text-xs text-[#6F7175] mt-1">{safeText(basePriceObj.label)}</p>
                            </div>
-                           <span className="text-[13px] font-bold text-[#F4F4F2]">{formatCurrency(basePriceObj.price)}</span>
+                           <span className="text-[13px] font-bold text-[#F4F4F2]">{formatCurrency(safeNumber(basePriceObj.price))}</span>
                         </div>
 
                         {/* Addons */}
-                        {formData.addons.length > 0 && (
+                        {safeArray(formData.addons).length > 0 && (
                            <div className="pt-4 border-t border-white/5 space-y-3">
                               <span className="text-[10px] text-[#A7A7A3] uppercase tracking-widest block mb-2">Adicionais</span>
-                              {formData.addons.map(addonId => {
+                              {safeArray(formData.addons).map(addonId => {
                                  const a = ADDONS.find(x => x.id === addonId);
                                  if(!a) return null;
                                  return (
@@ -788,6 +910,129 @@ export default function Booking({ onNavigate, onSubmit, services, scheduleSettin
          bookings={bookings}
          scheduleSettings={scheduleSettings}
       />
+
+      <AnimatePresence>
+        {isServiceModalOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }} 
+            className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm"
+          >
+            <motion.div 
+              initial={{ y: '100%' }} 
+              animate={{ y: 0 }} 
+              exit={{ y: '100%' }} 
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="w-full max-w-lg bg-[#0B0B0D] sm:rounded-3xl rounded-t-3xl border-t border-x sm:border-b border-white/10 shadow-2xl overflow-hidden flex flex-col h-[85vh] sm:h-auto max-h-[88dvh]"
+            >
+              {/* Header */}
+              <div className="p-5 sm:p-6 border-b border-white/5 flex justify-between items-start shrink-0">
+                <div>
+                  <h3 className="text-lg sm:text-xl font-black text-[#F4F4F2] mb-1">Escolha o serviço</h3>
+                  <p className="text-[11px] sm:text-xs text-[#A7A7A3]">Compare preço, duração e categoria.</p>
+                </div>
+                <button 
+                  onClick={() => setIsServiceModalOpen(false)}
+                  className="w-8 h-8 rounded-full bg-[#111114] border border-white/5 flex items-center justify-center text-[#A7A7A3] hover:text-white hover:bg-white/10 transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Search & Filters */}
+              <div className="p-4 border-b border-white/5 flex flex-col gap-3 shrink-0 bg-[#050505]/50">
+                <div className="relative">
+                  <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6F7175]" />
+                  <input 
+                    type="text" 
+                    placeholder="Buscar serviço..."
+                    value={serviceSearch}
+                    onChange={e => setServiceSearch(e.target.value)}
+                    className="w-full bg-[#111114] border border-white/5 rounded-xl py-2.5 pl-10 pr-4 text-sm text-[#F4F4F2] focus:border-[#FFD000]/50 outline-none transition-colors placeholder:text-[#6F7175]"
+                  />
+                  {serviceSearch && (
+                    <button 
+                      onClick={() => setServiceSearch('')}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-[#6F7175] hover:text-white"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide -mx-4 px-4 mask-edges">
+                  {uniqueCategories.map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => setServiceCategoryFilter(cat)}
+                      className={`whitespace-nowrap px-3.5 py-1.5 rounded-full text-[11px] font-bold transition-all border ${serviceCategoryFilter === cat ? 'bg-[#FFD000]/10 border-[#FFD000]/30 text-[#FFD000]' : 'bg-[#111114] border-white/5 text-[#A7A7A3] hover:text-white'}`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* List */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 relative pb-28 sm:pb-6">
+                {filteredModalServices.length === 0 ? (
+                  <div className="text-center py-10 opacity-50">
+                     <p className="text-[#A7A7A3] mt-2 text-sm">Nenhum serviço encontrado.</p>
+                  </div>
+                ) : (
+                  filteredModalServices.map(service => {
+                    const isSelected = formData.serviceId === service.id;
+                    return (
+                      <button
+                        key={service.id}
+                        onClick={() => {
+                          setFormData(p => ({
+                            ...p, 
+                            serviceId: service.id,
+                            vehicleType: p.serviceId === service.id ? p.vehicleType : '', // reset if changed
+                            addons: Array.isArray(p.addons) ? p.addons : []
+                          }));
+                          setErrors(p => ({ ...p, serviceId: '' }));
+                          setIsServiceModalOpen(false);
+                        }}
+                        className={`w-full text-left p-4 rounded-2xl border transition-all relative overflow-hidden flex flex-col gap-2 ${isSelected ? 'bg-[#FFD000]/5 border-[#FFD000]/40' : 'bg-[#111114] border-white/5 hover:border-white/20'}`}
+                      >
+                        {isSelected && <div className="absolute top-0 right-0 w-24 h-24 bg-[#FFD000]/10 blur-2xl rounded-full pointer-events-none"></div>}
+                        
+                        <div className="flex justify-between items-start gap-4">
+                           <div className="flex-1 min-w-0">
+                              <span className="text-[9px] uppercase tracking-widest text-[#FFD000] font-black">{safeText(service.categoryName) || 'Serviço'}</span>
+                              <h4 className="text-[15px] sm:text-base font-black text-[#F4F4F2] mt-0.5 truncate">{safeText(service.name) || 'Sem Nome'}</h4>
+                           </div>
+                           {isSelected && (
+                             <div className="w-5 h-5 rounded-full bg-[#FFD000] flex items-center justify-center shrink-0 mt-1">
+                               <Check size={12} className="text-black" />
+                             </div>
+                           )}
+                        </div>
+
+                        <p className="text-[11px] sm:text-xs text-[#A7A7A3] line-clamp-1">{safeText(service.shortDescription) || 'Sem descrição.'}</p>
+
+                        <div className="flex flex-wrap items-center gap-3 pt-2 mt-1 border-t border-white/5 w-full">
+                           <div className="flex items-center gap-1">
+                              <span className="text-[12px] text-[#FFE066] font-black">{getPriceDisplay(safeArray(service.priceOptions))}</span>
+                           </div>
+                           <div className="w-px h-3 bg-white/10"></div>
+                           <div className="flex items-center gap-1.5 text-[#A7A7A3] text-[10px] font-bold">
+                              <Clock size={10} className="text-[#FFD000]" />
+                              <span>{safeText(service.deliveryLabel) || 'Consultar'}</span>
+                           </div>
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

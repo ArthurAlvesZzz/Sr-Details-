@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { BookingRequest, ScheduleSettings, Service, RequestStatus } from '../../types.ts';
 import { motion, AnimatePresence } from 'motion/react';
 import { Calendar as CalendarIcon, Clock, Lock, X, Plus } from 'lucide-react';
 import { useToast } from './ToastProvider';
 import { getFirebaseFriendlyError } from '../../utils/firebaseErrors';
+import { safeArray } from '../../utils/safeData.ts';
 
 interface AdminScheduleTabProps {
   bookings: BookingRequest[];
@@ -34,18 +35,18 @@ export default function AdminScheduleTab({ bookings, settings, setSettings, onNa
   const bookingsForDate = bookings.filter(b => b.date === selectedDate);
 
   const toggleBlock = async (time: string) => {
-    const isDayBlocked = settings.blockedDates?.includes(selectedDate);
+    const isDayBlocked = safeArray(settings.blockedDates).includes(selectedDate);
     if (isDayBlocked) {
       showToast('Este dia inteiro já está bloqueado.', 'info');
       return;
     }
 
-    const isBlocked = settings.blockedTimeSlots?.some(b => b.date === selectedDate && b.startTime === time);
+    const isBlocked = safeArray(settings.blockedTimeSlots).some(b => b.date === selectedDate && b.startTime === time);
     try {
       const { db } = await import('../../lib/firebase');
       const { doc, setDoc } = await import('firebase/firestore');
       
-      let newBlocks = [...(settings.blockedTimeSlots || [])];
+      let newBlocks = [...safeArray(settings.blockedTimeSlots)];
       if (isBlocked) {
          newBlocks = newBlocks.filter(b => !(b.date === selectedDate && b.startTime === time));
       } else {
@@ -68,12 +69,12 @@ export default function AdminScheduleTab({ bookings, settings, setSettings, onNa
   };
 
   const handleBlockDay = async () => {
-    const isBlocked = settings.blockedDates?.includes(selectedDate);
+    const isBlocked = safeArray(settings.blockedDates).includes(selectedDate);
     try {
       const { db } = await import('../../lib/firebase');
       const { doc, setDoc } = await import('firebase/firestore');
       
-      let newDates = [...(settings.blockedDates || [])];
+      let newDates = [...safeArray(settings.blockedDates)];
       if (isBlocked) {
         newDates = newDates.filter(d => d !== selectedDate);
       } else {
@@ -90,7 +91,7 @@ export default function AdminScheduleTab({ bookings, settings, setSettings, onNa
     }
   };
 
-  const isDayBlocked = settings.blockedDates?.includes(selectedDate);
+  const isDayBlocked = safeArray(settings.blockedDates).includes(selectedDate);
 
   // Manual Booking Form State
   const [formData, setFormData] = useState({
@@ -308,8 +309,8 @@ export default function AdminScheduleTab({ bookings, settings, setSettings, onNa
 
         {timeline.map((time, idx) => {
            const booking = bookingsForDate.find(b => b.time === time);
-           const isBlocked = settings.blockedTimeSlots?.some(b => b.date === selectedDate && b.startTime === time);
-           const isDayBlocked = settings.blockedDates?.includes(selectedDate);
+           const isBlocked = safeArray(settings.blockedTimeSlots).some(b => b.date === selectedDate && b.startTime === time);
+           const isDayBlocked = safeArray(settings.blockedDates).includes(selectedDate);
            
            let statusColor = 'bg-[#111114] border-white/10';
            let textColor = 'text-[#6F7175]';
