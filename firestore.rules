@@ -1,0 +1,76 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() { return request.auth != null; }
+    
+    function getUserRole() {
+      return get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.role;
+    }
+    
+    function isAdminEmail() {
+      return request.auth != null && request.auth.token.email == 'brgamexd@gmail.com';
+    }
+
+    function isOwner() {
+      return isSignedIn() && (isAdminEmail() || getUserRole() == 'owner');
+    }
+    
+    function isManager() {
+      return isSignedIn() && (isAdminEmail() || getUserRole() in ['owner', 'manager']);
+    }
+    
+    function isAttendant() {
+      return isSignedIn() && (isAdminEmail() || getUserRole() in ['owner', 'manager', 'attendant']);
+    }
+    
+    function isTechnician() {
+      return isSignedIn() && (isAdminEmail() || getUserRole() in ['owner', 'manager', 'attendant', 'technician']);
+    }
+
+    match /services/{docId} {
+      allow read: if true;
+      allow write: if isManager();
+    }
+    
+    match /serviceCategories/{docId} {
+      allow read: if true;
+      allow write: if isManager();
+    }
+    
+    match /businessSettings/{docId} {
+      allow read: if true;
+      allow write: if isOwner();
+    }
+    
+    match /scheduleSettings/{docId} {
+      allow read: if true;
+      allow write: if isManager();
+    }
+    
+    match /scannerRules/{docId} {
+      allow read: if true;
+      allow write: if isManager();
+    }
+    
+    match /homeSections/{docId} {
+      allow read: if true;
+      allow write: if isManager();
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if isTechnician();
+      allow delete: if isManager();
+    }
+    
+    match /adminUsers/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

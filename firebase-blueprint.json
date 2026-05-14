@@ -1,0 +1,119 @@
+{
+  "entities": {
+    "Service": {
+      "title": "Service",
+      "description": "A detailing service offered to customers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "benefits": { "type": "array", "items": { "type": "string" } },
+        "includes": { "type": "array", "items": { "type": "string" } },
+        "duration": { "type": "string" },
+        "prices": { 
+          "type": "array", 
+          "items": { 
+            "type": "object",
+            "properties": {
+              "vehicleType": { "type": "string" },
+              "label": { "type": "string" },
+              "price": { "type": "number" },
+              "installmentLabel": { "type": "string" }
+            }
+          } 
+        },
+        "startingFrom": { "type": "boolean" },
+        "badge": { "type": "string" },
+        "recommendedFor": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "name", "category", "description", "benefits", "includes", "duration", "prices", "recommendedFor", "active"]
+    },
+    "BookingAddOn": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "price": { "type": "number" }
+      },
+      "required": ["id", "name", "price"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "A booking requested by a customer",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "protocol": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "customerEmail": { "type": "string" },
+        "vehicleType": { "type": "string" },
+        "vehicleModel": { "type": "string" },
+        "vehicleYear": { "type": "string" },
+        "vehicleColor": { "type": "string" },
+        "plate": { "type": "string" },
+        "carCondition": { "type": "string" },
+        "serviceId": { "type": "string" },
+        "serviceName": { "type": "string" },
+        "selectedPriceLabel": { "type": "string" },
+        "servicePrice": { "type": "number" },
+        "addOns": { "type": "array", "items": { "$ref": "#/entities/BookingAddOn" } },
+        "totalPrice": { "type": "number" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "notes": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "photoUrl": { "type": "string" }
+      },
+      "required": ["id", "protocol", "customerName", "customerPhone", "vehicleType", "vehicleModel", "serviceId", "serviceName", "selectedPriceLabel", "servicePrice", "addOns", "totalPrice", "date", "time", "notes", "status", "createdAt"]
+    },
+    "BrandSettings": {
+      "title": "BrandSettings",
+      "description": "Settings for the brand",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "slogan": { "type": "string" },
+        "primaryColor": { "type": "string" },
+        "secondaryColor": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "address": { "type": "string" }
+      },
+      "required": ["name", "slogan", "primaryColor", "secondaryColor", "whatsapp", "address"]
+    },
+    "AvailabilitySlot": {
+      "title": "AvailabilitySlot",
+      "description": "Available time slots for a given date",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "times": { "type": "array", "items": { "type": "string" } },
+        "isFullyBooked": { "type": "boolean" }
+      },
+      "required": ["date", "times", "isFullyBooked"]
+    }
+  },
+  "firestore": {
+    "/services/{serviceId}": {
+      "schema": "#/entities/Service",
+      "description": "Services offered by the brand"
+    },
+    "/bookings/{bookingId}": {
+      "schema": "#/entities/Booking",
+      "description": "Customer bookings"
+    },
+    "/settings/brand": {
+      "schema": "#/entities/BrandSettings",
+      "description": "Brand configuration"
+    },
+    "/availabilitySlots/{date}": {
+      "schema": "#/entities/AvailabilitySlot",
+      "description": "Available slots per date"
+    }
+  }
+}
